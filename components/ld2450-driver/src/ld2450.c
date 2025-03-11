@@ -28,10 +28,9 @@ ESP_EVENT_DEFINE_BASE(LD2450_EVENTS);
 /**
  * @brief Driver state structure
  */
- typedef struct {
+typedef struct {
     bool initialized;                      /*!< Initialization flag */
     bool config_mode;                      /*!< Configuration mode flag */
-    volatile ld2450_task_state_t task_state; /*!< State of the receiver task */
     uart_port_t uart_port;                 /*!< UART port */
     SemaphoreHandle_t uart_mutex;          /*!< UART mutex for thread safety */
     QueueHandle_t data_queue;              /*!< Queue for radar data frames */
@@ -46,7 +45,6 @@ ESP_EVENT_DEFINE_BASE(LD2450_EVENTS);
 static ld2450_driver_t s_driver = {
     .initialized = false,
     .config_mode = false,
-    .task_state = LD2450_TASK_STOPPED,
     .uart_port = UART_NUM_MAX,
     .uart_mutex = NULL,
     .data_queue = NULL,
@@ -140,15 +138,6 @@ static ld2450_filter_mode_t ld2450_protocol_to_filter_mode(uint16_t type)
     }
 }
 
-/**
- * @brief Task state enumeration for receiver task
- */
- typedef enum {
-    LD2450_TASK_RUNNING,     /*!< Task is running normally */
-    LD2450_TASK_STOPPING,    /*!< Task is requested to stop */
-    LD2450_TASK_STOPPED      /*!< Task has stopped */
-} ld2450_task_state_t;
-
 esp_err_t ld2450_init(const ld2450_config_t *config)
 {
     // Check if already initialized
@@ -193,9 +182,6 @@ esp_err_t ld2450_init(const ld2450_config_t *config)
     s_driver.uart_port = config->uart_port;
     s_driver.event_loop_enabled = config->event_loop_enabled;
     
-    // Set task state before creating task
-    s_driver.task_state = LD2450_TASK_RUNNING;
-    
     // Create receiver task
     BaseType_t task_created = xTaskCreate(
         ld2450_receiver_task,
@@ -208,7 +194,6 @@ esp_err_t ld2450_init(const ld2450_config_t *config)
     
     if (task_created != pdTRUE) {
         // Clean up on failure
-        s_driver.task_state = LD2450_TASK_STOPPED;
         uart_driver_delete(config->uart_port);
         vSemaphoreDelete(s_driver.uart_mutex);
         vQueueDelete(s_driver.data_queue);
@@ -233,69 +218,16 @@ esp_err_t ld2450_deinit(void)
         return ESP_ERR_LD2450_NOT_INITIALIZED;
     }
     
-    ESP_LOGI(TAG, "Deinitializing driver");
-    
-    // Signal the task to exit, protected by mutex
-    if (xSemaphoreTake(s_driver.uart_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
-        s_driver.task_state = LD2450_TASK_STOPPING;
-        xSemaphoreGive(s_driver.uart_mutex);
-    } else {
-        ESP_LOGE(TAG, "Failed to acquire mutex for deinit");
-    }
-    
-    // Wait for the task to exit safely with timeout
-    uint32_t start_time = esp_timer_get_time() / 1000;  // Convert to ms
-    bool task_stopped = false;
-    
-    while (!task_stopped && ((esp_timer_get_time() / 1000) - start_time < 500)) {
-        if (xSemaphoreTake(s_driver.uart_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-            task_stopped = (s_driver.task_state == LD2450_TASK_STOPPED);
-            xSemaphoreGive(s_driver.uart_mutex);
-        }
-        
-        if (!task_stopped) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-    }
-    
-    // Store task handle locally and clear the driver's handle to avoid races
-    TaskHandle_t task_to_delete = NULL;
-    if (xSemaphoreTake(s_driver.uart_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        task_to_delete = s_driver.receiver_task;
+    // Delete receiver task
+    if (s_driver.receiver_task != NULL) {
+        vTaskDelete(s_driver.receiver_task);
         s_driver.receiver_task = NULL;
-        xSemaphoreGive(s_driver.uart_mutex);
     }
     
-    // Delete the task if it still exists
-    if (task_to_delete != NULL) {
-        // Check if task is in a valid state before deletion
-        BaseType_t uxReturn = 0;
-        
-        #if (INCLUDE_xTaskGetSchedulerState == 1)
-        if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
-            uxReturn = uxTaskGetStackHighWaterMark(task_to_delete);
-        }
-        #else
-        uxReturn = uxTaskGetStackHighWaterMark(task_to_delete);
-        #endif
-        
-        if (uxReturn != 0) {
-            ESP_LOGW(TAG, "Deleting receiver task");
-            vTaskDelete(task_to_delete);
-            // Allow time for deletion to complete
-            vTaskDelay(pdMS_TO_TICKS(50));
-        } else {
-            ESP_LOGW(TAG, "Task handle appears invalid, skipping deletion");
-        }
-    }
-    
-    // Clean up UART with error check but don't abort on failure
-    if (uart_is_driver_installed(s_driver.uart_port)) {
-        esp_err_t err = uart_driver_delete(s_driver.uart_port);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "Failed to delete UART driver: %s", esp_err_to_name(err));
-        }
-    }
+    // Delete UART driver
+    ESP_RETURN_ON_ERROR(
+        uart_driver_delete(s_driver.uart_port),
+        TAG, "Failed to delete UART driver");
     
     // Delete synchronization primitives
     if (s_driver.uart_mutex != NULL) {
@@ -314,7 +246,6 @@ esp_err_t ld2450_deinit(void)
     s_driver.data_callback = NULL;
     s_driver.callback_user_data = NULL;
     s_driver.uart_port = UART_NUM_MAX;
-    s_driver.task_state = LD2450_TASK_STOPPED;
     
     ESP_LOGI(TAG, "Driver deinitialized");
     return ESP_OK;
@@ -1461,164 +1392,207 @@ static esp_err_t ld2450_process_data_frame(uint8_t *data, size_t len, ld2450_fra
  /**
   * @brief Receiver task to handle incoming data from the radar
   */
-  static void ld2450_receiver_task(void *arg)
-  {
-      if (!s_driver.initialized) {
-          vTaskDelete(NULL);
-          return;
-      }
-      
-      ESP_LOGI(TAG, "Receiver task started");
-      
-      // Buffer for incoming data
-      uint8_t rx_buffer[128];
-      
-      // Data frame parsing state
-      ld2450_data_rx_state_t data_state = LD2450_DATA_STATE_WAIT_HEADER;
-      uint8_t header_match_pos = 0;
-      uint8_t trailer_match_pos = 0;
-      uint8_t data_frame[64]; // Buffer to store complete data frame
-      size_t data_frame_pos = 0;
-      
-      // Expected patterns
-      static const uint8_t data_header[] = LD2450_DATA_FRAME_HEADER;
-      static const uint8_t data_trailer[] = LD2450_DATA_FRAME_TRAILER;
-      
-      // Target presence tracking for events
-      bool had_targets_previously = false;
-      
-      // Standard frame size: Header(4) + Target1(8) + Target2(8) + Target3(8) + Trailer(2) = 30 bytes
-      const size_t standard_frame_size = 30;
-      
-      while (s_driver.task_state == LD2450_TASK_RUNNING) {
-          // Check how many bytes are available
-          size_t available_bytes;
-          if (uart_get_buffered_data_len(s_driver.uart_port, &available_bytes) != ESP_OK) {
-              ESP_LOGE(TAG, "Failed to get UART buffered data length");
-              vTaskDelay(pdMS_TO_TICKS(10));
-              continue;
-          }
-          
-          if (available_bytes == 0) {
-              vTaskDelay(pdMS_TO_TICKS(10));
-              continue;
-          }
-          
-          // Read available data (limit to buffer size)
-          size_t bytes_to_read = (available_bytes > sizeof(rx_buffer)) ? 
-                                sizeof(rx_buffer) : available_bytes;
-          int bytes_read = uart_read_bytes(s_driver.uart_port, rx_buffer, 
-                                          bytes_to_read, pdMS_TO_TICKS(20));
-          
-          if (bytes_read <= 0) {
-              continue;
-          }
-          
-          // Process each byte
-          for (int i = 0; i < bytes_read; i++) {
-              uint8_t byte = rx_buffer[i];
-              
-              // State machine for data frame parsing
-              switch (data_state) {
-                  case LD2450_DATA_STATE_WAIT_HEADER:
-                      // Match header byte by byte
-                      if (byte == data_header[header_match_pos]) {
-                          // Store byte in the data frame
-                          data_frame[data_frame_pos++] = byte;
-                          header_match_pos++;
-                          
-                          if (header_match_pos == LD2450_DATA_HEADER_LEN) {
-                              // Header fully matched, move to reading targets data
-                              data_state = LD2450_DATA_STATE_READ_TARGETS;
-                              header_match_pos = 0;
-                          }
-                      } else {
-                          // Reset on mismatch
-                          header_match_pos = 0;
-                          data_frame_pos = 0;
-                          
-                          // If this byte matches the first header byte, keep it
-                          if (byte == data_header[0]) {
-                              data_frame[data_frame_pos++] = byte;
-                              header_match_pos = 1;
-                          }
-                      }
-                      break;
-                      
-                  case LD2450_DATA_STATE_READ_TARGETS:
-                      // Store byte in data frame
-                      data_frame[data_frame_pos++] = byte;
-                      
-                      // Check if we have all target data (24 bytes = 3 targets × 8 bytes)
-                      if (data_frame_pos == LD2450_DATA_HEADER_LEN + 24) {
-                          data_state = LD2450_DATA_STATE_WAIT_TRAILER;
-                      }
-                      break;
-                      
-                  case LD2450_DATA_STATE_WAIT_TRAILER:
-                      // Store byte in data frame
-                      data_frame[data_frame_pos++] = byte;
-                      
-                      // Match trailer bytes
-                      if (byte == data_trailer[trailer_match_pos]) {
-                          trailer_match_pos++;
-                          
-                          if (trailer_match_pos == LD2450_DATA_TRAILER_LEN) {
-                              // Trailer fully matched, frame is complete
-                              data_state = LD2450_DATA_STATE_COMPLETE;
-                          }
-                      } else {
-                          // Reset on trailer mismatch
-                          trailer_match_pos = 0;
-                          
-                          // Check if this byte might be the start of a new trailer
-                          if (byte == data_trailer[0]) {
-                              trailer_match_pos = 1;
-                          }
-                      }
-                      break;
-                      
-                  case LD2450_DATA_STATE_COMPLETE:
-                      // We shouldn't reach here, but if we do, start over
-                      data_state = LD2450_DATA_STATE_WAIT_HEADER;
-                      header_match_pos = 0;
-                      trailer_match_pos = 0;
-                      data_frame_pos = 0;
-                      break;
-              }
-              
-              // Process completed frame
-              if (data_state == LD2450_DATA_STATE_COMPLETE) {
-                  // Existing frame processing code...
-                  // (Keep this code unchanged)
-                  
-                  // Reset for next frame
-                  data_state = LD2450_DATA_STATE_WAIT_HEADER;
-                  header_match_pos = 0;
-                  trailer_match_pos = 0;
-                  data_frame_pos = 0;
-              }
-              
-              // Prevent buffer overflow
-              if (data_frame_pos >= sizeof(data_frame)) {
-                  ESP_LOGW(TAG, "Data frame buffer overflow, resetting parser");
-                  data_state = LD2450_DATA_STATE_WAIT_HEADER;
-                  header_match_pos = 0;
-                  trailer_match_pos = 0;
-                  data_frame_pos = 0;
-              }
-          }
-      }
-      
-      ESP_LOGI(TAG, "Receiver task exiting cleanly");
-
-      // Signal that the task has stopped
-    if (xSemaphoreTake(s_driver.uart_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-        s_driver.task_state = LD2450_TASK_STOPPED;
-        xSemaphoreGive(s_driver.uart_mutex);
-    }
-
-    // Suspend instead of delete - safer and allows the main task to properly clean up
-    vTaskSuspend(NULL);
-  }
+ static void ld2450_receiver_task(void *arg)
+ {
+     if (!s_driver.initialized) {
+         vTaskDelete(NULL);
+         return;
+     }
+     
+     ESP_LOGI(TAG, "Receiver task started");
+     
+     // Buffer for incoming data
+     uint8_t rx_buffer[128];
+     
+     // Data frame parsing state
+     ld2450_data_rx_state_t data_state = LD2450_DATA_STATE_WAIT_HEADER;
+     uint8_t header_match_pos = 0;
+     uint8_t trailer_match_pos = 0;
+     uint8_t data_frame[64]; // Buffer to store complete data frame
+     size_t data_frame_pos = 0;
+     
+     // Expected patterns
+     static const uint8_t data_header[] = LD2450_DATA_FRAME_HEADER;
+     static const uint8_t data_trailer[] = LD2450_DATA_FRAME_TRAILER;
+     
+     // Target presence tracking for events
+     bool had_targets_previously = false;
+     
+     // Standard frame size: Header(4) + Target1(8) + Target2(8) + Target3(8) + Trailer(2) = 30 bytes
+     const size_t standard_frame_size = 30;
+     
+     while (true) {
+         // Check how many bytes are available
+         size_t available_bytes;
+         if (uart_get_buffered_data_len(s_driver.uart_port, &available_bytes) != ESP_OK) {
+             ESP_LOGE(TAG, "Failed to get UART buffered data length");
+             vTaskDelay(pdMS_TO_TICKS(10));
+             continue;
+         }
+         
+         if (available_bytes == 0) {
+             vTaskDelay(pdMS_TO_TICKS(10));
+             continue;
+         }
+         
+         // Read available data (limit to buffer size)
+         size_t bytes_to_read = (available_bytes > sizeof(rx_buffer)) ? 
+                               sizeof(rx_buffer) : available_bytes;
+         int bytes_read = uart_read_bytes(s_driver.uart_port, rx_buffer, 
+                                         bytes_to_read, pdMS_TO_TICKS(20));
+         
+         if (bytes_read <= 0) {
+             continue;
+         }
+         
+         // Process each byte
+         for (int i = 0; i < bytes_read; i++) {
+             uint8_t byte = rx_buffer[i];
+             
+             // State machine for data frame parsing
+             switch (data_state) {
+                 case LD2450_DATA_STATE_WAIT_HEADER:
+                     // Match header byte by byte
+                     if (byte == data_header[header_match_pos]) {
+                         // Store byte in the data frame
+                         data_frame[data_frame_pos++] = byte;
+                         header_match_pos++;
+                         
+                         if (header_match_pos == LD2450_DATA_HEADER_LEN) {
+                             // Header fully matched, move to reading targets data
+                             data_state = LD2450_DATA_STATE_READ_TARGETS;
+                             header_match_pos = 0;
+                         }
+                     } else {
+                         // Reset on mismatch
+                         header_match_pos = 0;
+                         data_frame_pos = 0;
+                         
+                         // If this byte matches the first header byte, keep it
+                         if (byte == data_header[0]) {
+                             data_frame[data_frame_pos++] = byte;
+                             header_match_pos = 1;
+                         }
+                     }
+                     break;
+                     
+                 case LD2450_DATA_STATE_READ_TARGETS:
+                     // Store byte in data frame
+                     data_frame[data_frame_pos++] = byte;
+                     
+                     // Check if we have all target data (24 bytes = 3 targets × 8 bytes)
+                     if (data_frame_pos == LD2450_DATA_HEADER_LEN + 24) {
+                         data_state = LD2450_DATA_STATE_WAIT_TRAILER;
+                     }
+                     break;
+                     
+                 case LD2450_DATA_STATE_WAIT_TRAILER:
+                     // Store byte in data frame
+                     data_frame[data_frame_pos++] = byte;
+                     
+                     // Match trailer bytes
+                     if (byte == data_trailer[trailer_match_pos]) {
+                         trailer_match_pos++;
+                         
+                         if (trailer_match_pos == LD2450_DATA_TRAILER_LEN) {
+                             // Trailer fully matched, frame is complete
+                             data_state = LD2450_DATA_STATE_COMPLETE;
+                         }
+                     } else {
+                         // Reset on trailer mismatch
+                         trailer_match_pos = 0;
+                         
+                         // Check if this byte might be the start of a new trailer
+                         if (byte == data_trailer[0]) {
+                             trailer_match_pos = 1;
+                         }
+                     }
+                     break;
+                     
+                 case LD2450_DATA_STATE_COMPLETE:
+                     // We shouldn't reach here, but if we do, start over
+                     data_state = LD2450_DATA_STATE_WAIT_HEADER;
+                     header_match_pos = 0;
+                     trailer_match_pos = 0;
+                     data_frame_pos = 0;
+                     break;
+             }
+             
+             // Process completed frame
+             if (data_state == LD2450_DATA_STATE_COMPLETE) {
+                 // Sanity check frame size
+                 if (data_frame_pos != standard_frame_size) {
+                     ESP_LOGW(TAG, "Unexpected data frame size: %u bytes", data_frame_pos);
+                 } else {
+                     // Process data frame
+                     ld2450_frame_data_t frame;
+                     esp_err_t result = ld2450_process_data_frame(data_frame, data_frame_pos, &frame);
+                     
+                     if (result == ESP_OK) {
+                         // Take mutex for thread safety
+                         if (xSemaphoreTake(s_driver.uart_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                             // Update latest data
+                             memcpy(&s_driver.latest_data, &frame, sizeof(frame));
+                             
+                             // Call user callback if registered
+                             ld2450_data_callback_t callback = s_driver.data_callback;
+                             void* callback_data = s_driver.callback_user_data;
+                             xSemaphoreGive(s_driver.uart_mutex);
+                             
+                             if (callback != NULL) {
+                                 callback(&frame, callback_data);
+                             }
+                         }
+                         
+                         // Add to data queue for wait_for_data function (non-blocking)
+                         xQueueSendToBack(s_driver.data_queue, &frame, 0);
+                         
+                         // Send events if enabled
+                         if (s_driver.event_loop_enabled) {
+                             bool has_targets = false;
+                             for (int j = 0; j < 3; j++) {
+                                 if (frame.targets[j].present) {
+                                     has_targets = true;
+                                     break;
+                                 }
+                             }
+                             
+                             // Target state change events
+                             if (has_targets && !had_targets_previously) {
+                                 esp_event_post(LD2450_EVENTS, LD2450_EVENT_TARGET_DETECTED,
+                                               &frame, sizeof(frame), 0);
+                             } else if (!has_targets && had_targets_previously) {
+                                 esp_event_post(LD2450_EVENTS, LD2450_EVENT_TARGET_LOST,
+                                               NULL, 0, 0);
+                             }
+                             
+                             had_targets_previously = has_targets;
+                         }
+                     } else if (result != ESP_ERR_NOT_FOUND) {
+                         // Log error only if it's not a "no targets" error
+                         ESP_LOGW(TAG, "Failed to process data frame: %s", ld2450_err_to_str(result));
+                     }
+                 }
+                 
+                 // Reset for next frame
+                 data_state = LD2450_DATA_STATE_WAIT_HEADER;
+                 header_match_pos = 0;
+                 trailer_match_pos = 0;
+                 data_frame_pos = 0;
+             }
+             
+             // Prevent buffer overflow
+             if (data_frame_pos >= sizeof(data_frame)) {
+                 ESP_LOGW(TAG, "Data frame buffer overflow, resetting parser");
+                 data_state = LD2450_DATA_STATE_WAIT_HEADER;
+                 header_match_pos = 0;
+                 trailer_match_pos = 0;
+                 data_frame_pos = 0;
+             }
+         }
+     }
+     
+     // Task should never reach here
+     vTaskDelete(NULL);
+ }
  
