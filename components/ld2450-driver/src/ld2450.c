@@ -31,7 +31,7 @@ ESP_EVENT_DEFINE_BASE(LD2450_EVENTS);
  typedef struct {
     bool initialized;                      /*!< Initialization flag */
     bool config_mode;                      /*!< Configuration mode flag */
-    volatile bool task_running;            /*!< Flag to control receiver task lifecycle */
+    volatile ld2450_task_state_t task_state; /*!< State of the receiver task */
     uart_port_t uart_port;                 /*!< UART port */
     SemaphoreHandle_t uart_mutex;          /*!< UART mutex for thread safety */
     QueueHandle_t data_queue;              /*!< Queue for radar data frames */
@@ -46,7 +46,7 @@ ESP_EVENT_DEFINE_BASE(LD2450_EVENTS);
 static ld2450_driver_t s_driver = {
     .initialized = false,
     .config_mode = false,
-    .task_running = false,
+    .task_state = LD2450_TASK_STOPPED,
     .uart_port = UART_NUM_MAX,
     .uart_mutex = NULL,
     .data_queue = NULL,
@@ -140,6 +140,15 @@ static ld2450_filter_mode_t ld2450_protocol_to_filter_mode(uint16_t type)
     }
 }
 
+/**
+ * @brief Task state enumeration for receiver task
+ */
+ typedef enum {
+    LD2450_TASK_RUNNING,     /*!< Task is running normally */
+    LD2450_TASK_STOPPING,    /*!< Task is requested to stop */
+    LD2450_TASK_STOPPED      /*!< Task has stopped */
+} ld2450_task_state_t;
+
 esp_err_t ld2450_init(const ld2450_config_t *config)
 {
     // Check if already initialized
@@ -184,22 +193,22 @@ esp_err_t ld2450_init(const ld2450_config_t *config)
     s_driver.uart_port = config->uart_port;
     s_driver.event_loop_enabled = config->event_loop_enabled;
     
-    // Set task running flag before creating task
-    s_driver.task_running = true;
+    // Set task state before creating task
+    s_driver.task_state = LD2450_TASK_RUNNING;
     
     // Create receiver task
     BaseType_t task_created = xTaskCreate(
         ld2450_receiver_task,
         "ld2450_rx",
         config->task_stack_size,
-        NULL,  // No need to pass the flag as it's in the static structure
+        NULL,
         config->task_priority,
         &s_driver.receiver_task
     );
     
     if (task_created != pdTRUE) {
         // Clean up on failure
-        s_driver.task_running = false;
+        s_driver.task_state = LD2450_TASK_STOPPED;
         uart_driver_delete(config->uart_port);
         vSemaphoreDelete(s_driver.uart_mutex);
         vQueueDelete(s_driver.data_queue);
@@ -224,28 +233,69 @@ esp_err_t ld2450_deinit(void)
         return ESP_ERR_LD2450_NOT_INITIALIZED;
     }
     
-    // Signal the task to exit
-    s_driver.task_running = false;
+    ESP_LOGI(TAG, "Deinitializing driver");
     
-    // Wait for the task to exit safely
-    int timeout_count = 0;
-    while (s_driver.receiver_task != NULL && timeout_count < 10) {
-        vTaskDelay(pdMS_TO_TICKS(50));
-        timeout_count++;
+    // Signal the task to exit, protected by mutex
+    if (xSemaphoreTake(s_driver.uart_mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+        s_driver.task_state = LD2450_TASK_STOPPING;
+        xSemaphoreGive(s_driver.uart_mutex);
+    } else {
+        ESP_LOGE(TAG, "Failed to acquire mutex for deinit");
     }
     
-    // If the task is still running after timeout, forcefully delete it
-    if (s_driver.receiver_task != NULL) {
-        ESP_LOGW(TAG, "Receiver task did not exit cleanly, deleting forcefully");
-        TaskHandle_t temp_handle = s_driver.receiver_task;
-        s_driver.receiver_task = NULL;  // Clear handle before deletion
-        vTaskDelete(temp_handle);
+    // Wait for the task to exit safely with timeout
+    uint32_t start_time = esp_timer_get_time() / 1000;  // Convert to ms
+    bool task_stopped = false;
+    
+    while (!task_stopped && ((esp_timer_get_time() / 1000) - start_time < 500)) {
+        if (xSemaphoreTake(s_driver.uart_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            task_stopped = (s_driver.task_state == LD2450_TASK_STOPPED);
+            xSemaphoreGive(s_driver.uart_mutex);
+        }
+        
+        if (!task_stopped) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
     }
     
-    // Rest of the function remains the same...
-    ESP_RETURN_ON_ERROR(
-        uart_driver_delete(s_driver.uart_port),
-        TAG, "Failed to delete UART driver");
+    // Store task handle locally and clear the driver's handle to avoid races
+    TaskHandle_t task_to_delete = NULL;
+    if (xSemaphoreTake(s_driver.uart_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        task_to_delete = s_driver.receiver_task;
+        s_driver.receiver_task = NULL;
+        xSemaphoreGive(s_driver.uart_mutex);
+    }
+    
+    // Delete the task if it still exists
+    if (task_to_delete != NULL) {
+        // Check if task is in a valid state before deletion
+        BaseType_t uxReturn = 0;
+        
+        #if (INCLUDE_xTaskGetSchedulerState == 1)
+        if (xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
+            uxReturn = uxTaskGetStackHighWaterMark(task_to_delete);
+        }
+        #else
+        uxReturn = uxTaskGetStackHighWaterMark(task_to_delete);
+        #endif
+        
+        if (uxReturn != 0) {
+            ESP_LOGW(TAG, "Deleting receiver task");
+            vTaskDelete(task_to_delete);
+            // Allow time for deletion to complete
+            vTaskDelay(pdMS_TO_TICKS(50));
+        } else {
+            ESP_LOGW(TAG, "Task handle appears invalid, skipping deletion");
+        }
+    }
+    
+    // Clean up UART with error check but don't abort on failure
+    if (uart_is_driver_installed(s_driver.uart_port)) {
+        esp_err_t err = uart_driver_delete(s_driver.uart_port);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to delete UART driver: %s", esp_err_to_name(err));
+        }
+    }
     
     // Delete synchronization primitives
     if (s_driver.uart_mutex != NULL) {
@@ -264,6 +314,7 @@ esp_err_t ld2450_deinit(void)
     s_driver.data_callback = NULL;
     s_driver.callback_user_data = NULL;
     s_driver.uart_port = UART_NUM_MAX;
+    s_driver.task_state = LD2450_TASK_STOPPED;
     
     ESP_LOGI(TAG, "Driver deinitialized");
     return ESP_OK;
@@ -1439,7 +1490,7 @@ static esp_err_t ld2450_process_data_frame(uint8_t *data, size_t len, ld2450_fra
       // Standard frame size: Header(4) + Target1(8) + Target2(8) + Target3(8) + Trailer(2) = 30 bytes
       const size_t standard_frame_size = 30;
       
-      while (s_driver.task_running) {
+      while (s_driver.task_state == LD2450_TASK_RUNNING) {
           // Check how many bytes are available
           size_t available_bytes;
           if (uart_get_buffered_data_len(s_driver.uart_port, &available_bytes) != ESP_OK) {
@@ -1560,13 +1611,14 @@ static esp_err_t ld2450_process_data_frame(uint8_t *data, size_t len, ld2450_fra
       }
       
       ESP_LOGI(TAG, "Receiver task exiting cleanly");
-      
-      // Set the task handle to NULL to indicate the task is exiting
-      if (xSemaphoreTake(s_driver.uart_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-          s_driver.receiver_task = NULL;
-          xSemaphoreGive(s_driver.uart_mutex);
-      }
-      
-      vTaskDelete(NULL);  // Self-delete
+
+      // Signal that the task has stopped
+    if (xSemaphoreTake(s_driver.uart_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        s_driver.task_state = LD2450_TASK_STOPPED;
+        xSemaphoreGive(s_driver.uart_mutex);
+    }
+
+    // Suspend instead of delete - safer and allows the main task to properly clean up
+    vTaskSuspend(NULL);
   }
  
