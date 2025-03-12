@@ -45,6 +45,12 @@ extern "C" {
 /** @brief Timeout for module restart in milliseconds */
 #define LD2450_RESTART_TIMEOUT_MS 3000
 
+/** @brief Size of the UART RX buffer (replaces CONFIG_LD2450_UART_RX_BUF_SIZE) */
+#define LD2450_UART_RX_BUF_SIZE 512
+
+/** @brief Stack size for the processing task (replaces CONFIG_LD2450_TASK_STACK_SIZE) */
+#define LD2450_TASK_STACK_SIZE 4096
+
 /**
  * @brief Frame headers and footers
  */
