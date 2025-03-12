@@ -1,17 +1,21 @@
-# CMakeLists.txt for LD2450 Radar Driver Component
+# components/ld2450-driver/CMakeLists.txt
+
 idf_component_register(
-    SRCS 
+    SRCS
         "src/ld2450.c"
-    INCLUDE_DIRS 
+        "src/ld2450_commands.c"
+        "src/ld2450_parser.c"
+    INCLUDE_DIRS
         "include"
-    REQUIRES 
-        "driver"
-        "esp_timer"
-        "esp_event"
-        "log"
-        "esp_common"
-        "freertos"
+    PRIV_INCLUDE_DIRS
+        "src"
+    REQUIRES
+        driver
+        log
+        freertos
+        esp_event
+        esp_common
+        esp_timer
 )
 
-# Set compiler options for ESP-IDF v5.4 compatibility
-target_compile_options(${COMPONENT_LIB} PRIVATE "-Wno-format")
+target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror)
