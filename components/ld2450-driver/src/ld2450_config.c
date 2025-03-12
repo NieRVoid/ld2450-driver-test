@@ -11,6 +11,7 @@
  */
 
 #include <string.h>
+#include "ld2450.h"
 #include "ld2450_private.h"
 #include "esp_log.h"
 #include "driver/uart.h"
@@ -377,19 +378,24 @@ esp_err_t ld2450_get_firmware_version(ld2450_firmware_version_t *version)
     ret = ld2450_send_command(LD2450_CMD_READ_FW_VERSION, NULL, 0, 
                              ack_buffer, &ack_len, LD2450_CONFIG_TIMEOUT_MS);
     
-    if (ret == ESP_OK && ack_len >= 18) {
-        // Extract firmware version information (V[main].[sub])
-        version->main_version = ack_buffer[14] | (ack_buffer[15] << 8);
-        version->sub_version = ack_buffer[10] | (ack_buffer[11] << 8) | 
-                             ((uint32_t)ack_buffer[12] << 16) | 
-                             ((uint32_t)ack_buffer[13] << 24);
+    if (ret == ESP_OK && ack_len >= 22) {  // Make sure we have enough data (header(4) + len(2) + cmd(2) + status(2) + fw_type(2) + main_ver(2) + sub_ver(4) + footer(4))
+        // Extract firmware version information based on protocol documentation
+        // Main version is at offset 12-13 (little-endian)
+        version->main_version = ack_buffer[12] | (ack_buffer[13] << 8);
         
-        // Format version string
-        snprintf(version->version_string, sizeof(version->version_string), 
-                "V%d.%02d.%08x",
-                version->main_version,
-                version->sub_version >> 24,
-                version->sub_version & 0xFFFFFF);
+        // Sub-version is at offset 14-17 (little-endian)
+        version->sub_version = ack_buffer[14] | 
+                              (ack_buffer[15] << 8) | 
+                              ((uint32_t)ack_buffer[16] << 16) | 
+                              ((uint32_t)ack_buffer[17] << 24);
+        
+        // Format version string according to the protocol example (V1.02.22062416)
+        // Main version is split: lower byte is the first number, upper byte is after the first dot
+        snprintf(version->version_string, sizeof(version->version_string),
+                "V%u.%02u.%08lX", 
+                version->main_version & 0xFF,         // Lower byte of main version
+                (version->main_version >> 8) & 0xFF,  // Upper byte of main version
+                (unsigned long)version->sub_version); // Sub-version as a hex value
         
         ESP_LOGI(TAG, "Firmware version: %s", version->version_string);
     } else {

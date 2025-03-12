@@ -12,7 +12,6 @@
 
 #include <string.h>
 #include <math.h>
-#include "esp_attr.h"
 #include "esp_timer.h"
 #include "ld2450.h"
 #include "ld2450_private.h"
@@ -281,8 +280,8 @@ void ld2450_uart_event_handler(void *arg)
             {
                 // Read data from UART
                 int len = uart_read_bytes(instance->uart_port, data_buffer, 
-                    MIN(event.size, LD2450_UART_RX_BUF_SIZE),
-                    pdMS_TO_TICKS(100));
+                                         MIN(event.size, LD2450_UART_RX_BUF_SIZE),
+                                         pdMS_TO_TICKS(100));
                 
                 if (len > 0) {
                     // Process the received data

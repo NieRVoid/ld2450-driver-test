@@ -31,7 +31,7 @@ extern "C" {
 #define LD2450_LOG_TAG "LD2450"
 
 /** @brief Size of the ACK buffer for configuration commands */
-#define LD2450_ACK_BUFFER_SIZE 50
+#define LD2450_ACK_BUFFER_SIZE 128
 
 /** @brief Size of the command buffer */
 #define LD2450_CMD_BUFFER_SIZE 38
@@ -40,7 +40,7 @@ extern "C" {
 #define LD2450_DATA_FRAME_SIZE 30
 
 /** @brief Timeout for configuration commands in milliseconds */
-#define LD2450_CONFIG_TIMEOUT_MS 1000
+#define LD2450_CONFIG_TIMEOUT_MS 3000
 
 /** @brief Timeout for module restart in milliseconds */
 #define LD2450_RESTART_TIMEOUT_MS 3000
@@ -50,6 +50,11 @@ extern "C" {
 
 /** @brief Stack size for the processing task (replaces CONFIG_LD2450_TASK_STACK_SIZE) */
 #define LD2450_TASK_STACK_SIZE 4096
+
+/** @brief MIN macro for getting minimum of two values */
+#ifndef MIN
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#endif
 
 /**
  * @brief Frame headers and footers

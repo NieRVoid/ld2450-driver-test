@@ -11,7 +11,7 @@
  */
 
 #include <string.h>
-#include "sdkconfig.h"
+#include <inttypes.h>
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -21,7 +21,6 @@
 #include "esp_log.h"
 #include "driver/uart.h"
 #include "esp_timer.h"
-#include <inttypes.h>
 
 static const char *TAG = LD2450_LOG_TAG;
 
@@ -87,7 +86,7 @@ esp_err_t ld2450_init(const ld2450_config_t *config)
     
     // Install UART driver
     ret = uart_driver_install(config->uart_port, LD2450_UART_RX_BUF_SIZE * 2, 
-        0, 20, &instance->uart_queue, 0);
+                              0, 20, &instance->uart_queue, 0);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to install UART driver: %s", esp_err_to_name(ret));
         vSemaphoreDelete(instance->mutex);
@@ -125,13 +124,13 @@ esp_err_t ld2450_init(const ld2450_config_t *config)
     // Set initialized flag
     instance->initialized = true;
     
-    ESP_LOGI(TAG, "LD2450 driver initialized on UART%" PRIu32 " (RX: GPIO%" PRIu32 ", TX: GPIO%" PRIu32 ", baud: %" PRIu32 ")", 
-        uart_num, rx_pin, tx_pin, baud_rate);
+    ESP_LOGI(TAG, "LD2450 driver initialized on UART%" PRIu32 " (RX: GPIO%" PRIu32 ", TX: GPIO%" PRIu32 ", baud: %" PRIu32 ")",  
+        (uint32_t)instance->uart_port, (uint32_t)instance->rx_pin, (uint32_t)instance->tx_pin, instance->baud_rate);
     
     // Start processing task if auto-processing is enabled
     if (config->auto_processing) {
         xTaskCreate(ld2450_processing_task, "ld2450_task", LD2450_TASK_STACK_SIZE,
-            NULL, config->task_priority, &instance->task_handle);
+                    NULL, config->task_priority, &instance->task_handle);
                     
         if (!instance->task_handle) {
             ESP_LOGE(TAG, "Failed to create processing task");

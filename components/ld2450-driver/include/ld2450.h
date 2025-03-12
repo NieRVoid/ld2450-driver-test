@@ -61,7 +61,7 @@ typedef enum {
 typedef struct {
     uint16_t main_version;     /*!< Main version number */
     uint32_t sub_version;      /*!< Sub-version number */
-    char version_string[16];   /*!< Formatted version string (e.g., "V1.02.22062416") */
+    char version_string[32];   /*!< Formatted version string (e.g., "V1.02.22062416") */
 } ld2450_firmware_version_t;
 
 /**
