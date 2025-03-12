@@ -13,6 +13,10 @@
 #include <string.h>
 #include "ld2450_private.h"
 #include "esp_log.h"
+#include "driver/uart.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = LD2450_LOG_TAG;
 

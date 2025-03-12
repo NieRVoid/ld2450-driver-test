@@ -12,8 +12,12 @@
 
 #include <string.h>
 #include <math.h>
+#include "esp_timer.h"
+#include "ld2450.h"
 #include "ld2450_private.h"
 #include "esp_log.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = LD2450_LOG_TAG;
 

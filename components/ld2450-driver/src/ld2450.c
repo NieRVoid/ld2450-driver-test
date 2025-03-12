@@ -11,6 +11,12 @@
  */
 
 #include <string.h>
+#include "sdkconfig.h"
+#include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
+#include "ld2450.h"
 #include "ld2450_private.h"
 #include "esp_log.h"
 #include "driver/uart.h"

@@ -1,65 +1,90 @@
-# LD2450 Basic Example
+# HLK-LD2450 Basic Operation Example
 
-This example demonstrates the basic functionality of the HLK-LD2450 radar sensor driver for ESP32-IDF.
+This example demonstrates the basic functionality of the HLK-LD2450 driver component for ESP-IDF.
 
-## Features
+## Overview
 
-- Initialize the LD2450 radar driver
-- Configure radar tracking mode
-- Receive and process target data
-- Output radar data in both JSON and human-readable formats
+The example initializes the radar sensor driver, registers a callback function for target detection events, and displays information about detected targets including:
+
+- Position (X,Y) in millimeters
+- Movement speed in cm/s
+- Calculated distance in millimeters
+- Calculated angle in degrees
 
 ## Hardware Required
 
-- ESP32 development board
-- HLK-LD2450 24GHz radar sensor
-- UART connection between ESP32 and LD2450
+To run this example, you need:
 
-## Wiring
+* An ESP32 development board
+* A HLK-LD2450 24GHz radar module
+* Connection cables
 
-Connect the LD2450 to your ESP32 board as follows:
+## Connection
 
-| LD2450 Pin | ESP32 Pin | Description      |
-|------------|-----------|------------------|
-| TX         | GPIO 18   | UART RX (to ESP) |
-| RX         | GPIO 17   | UART TX (from ESP) |
-| GND        | GND       | Ground           |
-| 5V         | 5V        | Power (5V)       |
+By default, the example uses the following pins for UART communication with the radar:
 
-## Build and Run
+| ESP32 Pin | LD2450 Pin |
+|-----------|------------|
+| GPIO 16   | RXD        |
+| GPIO 17   | TXD        |
+| GND       | GND        |
+| 3.3V      | VCC        |
 
-1. Configure the project:
-   ```
-   idf.py menuconfig
-   ```
+You can modify the pin configuration in the code if needed.
 
-2. Build the project:
-   ```
-   idf.py build
-   ```
+## How to Use
 
-3. Flash the firmware and monitor the output:
-   ```
-   idf.py -p [PORT] flash monitor
-   ```
+### Build and Flash
 
-## Expected Output
+Run the following commands to build and flash the example:
 
-When running properly, the example will output detected targets in the following format:
-
-```
-I (5345) ld2450_example: Radar targets: {"timestamp_ms":5345,"targets":[{"id":0,"x_mm":152,"y_mm":1230,"speed_cmps":5,"distance_m":1.24,"angle_deg":7.1,"speed_mps":0.05,"resolution":180}]}
-I (5345) ld2450_example: Detected 1 active targets:
-I (5345) ld2450_example:   Target 0: x=152mm, y=1230mm, distance=1.24m, speed=0.05m/s
+```bash
+idf.py build
+idf.py -p PORT flash monitor
 ```
 
-## Customizing
+Replace `PORT` with your ESP32's serial port (e.g., `/dev/ttyUSB0` on Linux or `COM3` on Windows).
 
-You can modify the following parameters in `main.c`:
+### Example Output
 
-- `LD2450_UART_PORT`: UART port number
-- `LD2450_UART_TX_PIN`: GPIO pin for UART TX
-- `LD2450_UART_RX_PIN`: GPIO pin for UART RX
-- `LD2450_UART_BAUD_RATE`: UART baud rate (default: 256000)
-- `USE_MULTI_TARGET_MODE`: Set to true for multi-target tracking, false for single target
-- `PRINT_INTERVAL_MS`: How often to print target data (in milliseconds)
+When the example runs successfully, you should see output similar to the following:
+
+```
+I (341) ld2450_example: Starting HLK-LD2450 basic example
+I (351) LD2450: LD2450 driver initialized on UART2 (RX: GPIO16, TX: GPIO17, baud: 256000)
+I (361) LD2450: Auto-processing enabled with task priority 5
+I (371) ld2450_example: LD2450 radar initialized successfully
+I (381) LD2450: Entered configuration mode
+I (431) LD2450: Firmware version: V1.02.25031210
+I (441) LD2450: Exited configuration mode
+I (451) ld2450_example: Radar firmware version: V1.02.25031210
+I (461) LD2450: Entered configuration mode
+I (471) LD2450: Exited configuration mode
+I (481) ld2450_example: Waiting for target detection events...
+I (2481) ld2450_example: Target frame received: 0 targets detected
+I (3481) ld2450_example: Target frame received: 1 targets detected
+I (3481) ld2450_example: Target 1: position (x=-358, y=1251) mm, speed=12 cm/s, distance=1302.3 mm, angle=15.9°
+
+```
+
+When you move in front of the radar, you will see the target information change accordingly.
+
+## Troubleshooting
+
+If you don't see any target detection events:
+- Make sure the radar is connected correctly
+- Check that the radar has a clear field of view
+- Verify that the UART pins are configured correctly
+- Try moving around in front of the radar to trigger detection
+
+## Additional Features
+
+This example demonstrates only the basic functionality. The driver also supports:
+
+- Region filtering (include-only or exclude specific areas)
+- Single target or multi-target tracking modes
+- Bluetooth configuration
+- Factory reset and module restart
+- Baud rate configuration
+
+Check the driver API documentation for more information.
