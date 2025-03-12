@@ -77,6 +77,10 @@ esp_err_t ld2450_init(const ld2450_config_t *config)
         ESP_LOGE(TAG, "Failed to create command semaphore");
         return ESP_ERR_NO_MEM;
     }
+
+    // Initialize the semaphore to ensure it's in the correct state
+    xSemaphoreGive(g_ld2450_ctx.cmd_sem);
+    xSemaphoreTake(g_ld2450_ctx.cmd_sem, 0); // Reset to taken state
     
     /* Initialize UART */
     esp_err_t ret = ld2450_uart_init(config);
@@ -250,6 +254,15 @@ esp_err_t ld2450_send_command(uint16_t cmd_word, const uint8_t *cmd_value,
                         TAG, "Command value too large");
     
     esp_err_t ret = ESP_OK;
+
+    // Clear any pending data in RX buffer
+    uart_flush_input(g_ld2450_ctx.uart_port);
+
+    // Reset command parser before sending a new command
+    ld2450_reset_cmd_parser();
+
+    // Add a small delay before sending the command
+    vTaskDelay(pdMS_TO_TICKS(10));
     
     /* Take UART mutex to prevent concurrent command execution */
     if (xSemaphoreTake(g_ld2450_ctx.uart_mutex, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
@@ -438,11 +451,13 @@ static esp_err_t ld2450_uart_init(const ld2450_config_t *config)
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .source_clk = UART_SCLK_APB,
+        .rx_flow_ctrl_thresh = 122, // Add flow control threshold
     };
     
     /* Install UART driver with event queue */
     esp_err_t ret = uart_driver_install(config->uart_port, 
-                                      2 * LD2450_MAX_ACK_FRAME_SIZE, /* RX buffer size */
+                                    //   2 * LD2450_MAX_ACK_FRAME_SIZE, /* RX buffer size */
+                                      256,
                                       0,                            /* TX buffer size (0 = no buffer) */
                                       10,                           /* Queue size */
                                       &g_ld2450_ctx.uart_queue,     /* Queue handle */
@@ -484,13 +499,16 @@ static esp_err_t ld2450_uart_init(const ld2450_config_t *config)
         ESP_LOGE(TAG, "Failed to enable pattern detection");
         return ret;
     }
+
+    // Add a small delay to ensure pattern detection is properly set up
+    vTaskDelay(pdMS_TO_TICKS(10));
     
     /* Create UART processing task */
     BaseType_t task_ret = xTaskCreate(ld2450_uart_task, 
                                     "ld2450_uart", 
                                     4096,              /* Stack size */
                                     NULL, 
-                                    10,                /* Priority */
+                                    5,                /* Priority */
                                     &g_ld2450_ctx.uart_task);
     if (task_ret != pdPASS) {
         uart_driver_delete(config->uart_port);

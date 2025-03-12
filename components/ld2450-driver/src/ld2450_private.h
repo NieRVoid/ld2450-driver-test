@@ -92,9 +92,9 @@ static const uint8_t LD2450_CMD_FRAME_TAIL[LD2450_FRAME_TAIL_SIZE] = {0x04, 0x03
 /**
  * @brief Timeouts
  */
-#define LD2450_DEFAULT_TIMEOUT_MS     500     /*!< Default timeout for commands in milliseconds */
-#define LD2450_RESTART_TIMEOUT_MS     2000    /*!< Timeout for restart command in milliseconds */
-#define LD2450_UART_TIMEOUT_TICKS     (50 / portTICK_PERIOD_MS) /*!< Timeout for UART operations */
+#define LD2450_DEFAULT_TIMEOUT_MS     1000     /*!< Default timeout for commands in milliseconds */
+#define LD2450_RESTART_TIMEOUT_MS     3000    /*!< Timeout for restart command in milliseconds */
+#define LD2450_UART_TIMEOUT_TICKS     (100 / portTICK_PERIOD_MS) /*!< Timeout for UART operations */
 
 /**
  * @brief Driver state
