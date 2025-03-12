@@ -1,90 +1,71 @@
 # HLK-LD2450 Basic Operation Example
 
-This example demonstrates the basic functionality of the HLK-LD2450 driver component for ESP-IDF.
+This example demonstrates the basic usage of the HLK-LD2450 radar driver component.
 
-## Overview
+## Functionality
 
-The example initializes the radar sensor driver, registers a callback function for target detection events, and displays information about detected targets including:
+This application:
 
-- Position (X,Y) in millimeters
-- Movement speed in cm/s
-- Calculated distance in millimeters
-- Calculated angle in degrees
+1. Initializes the LD2450 radar driver with default settings
+2. Registers a callback to receive radar data
+3. Configures the radar module (firmware version, tracking mode)
+4. Displays detected targets' information every 3 seconds
 
 ## Hardware Required
 
-To run this example, you need:
-
-* An ESP32 development board
-* A HLK-LD2450 24GHz radar module
-* Connection cables
+* ESP32 development board
+* HLK-LD2450 radar module
+* Jumper wires to connect them
 
 ## Connection
 
-By default, the example uses the following pins for UART communication with the radar:
+Connect the HLK-LD2450 to your ESP32 board as follows:
 
-| ESP32 Pin | LD2450 Pin |
-|-----------|------------|
-| GPIO 16   | RXD        |
-| GPIO 17   | TXD        |
-| GND       | GND        |
-| 3.3V      | VCC        |
+| HLK-LD2450 Pin | ESP32 Pin (Default) |
+|----------------|---------------------|
+| TX             | GPIO16              |
+| RX             | GPIO17              |
+| 5V             | 5V                  |
+| GND            | GND                 |
 
-You can modify the pin configuration in the code if needed.
+## Configuration
 
-## How to Use
+You can modify the UART pins and other settings in the `app_main()` function:
 
-### Build and Flash
+```c
+ld2450_config_t config = LD2450_DEFAULT_CONFIG();
+config.uart_port = UART_NUM_1;     // Change UART port
+config.uart_rx_pin = 5;            // Change RX pin
+config.uart_tx_pin = 6;            // Change TX pin 
+config.uart_baud_rate = 115200;    // Change baud rate
+```
 
-Run the following commands to build and flash the example:
+## Building and Running
+
+Run the following commands:
 
 ```bash
 idf.py build
 idf.py -p PORT flash monitor
 ```
 
-Replace `PORT` with your ESP32's serial port (e.g., `/dev/ttyUSB0` on Linux or `COM3` on Windows).
+Replace `PORT` with your serial port (e.g., `/dev/ttyUSB0`, `COM3`).
 
-### Example Output
-
-When the example runs successfully, you should see output similar to the following:
+## Expected Output
 
 ```
-I (341) ld2450_example: Starting HLK-LD2450 basic example
-I (351) LD2450: LD2450 driver initialized on UART2 (RX: GPIO16, TX: GPIO17, baud: 256000)
-I (361) LD2450: Auto-processing enabled with task priority 5
-I (371) ld2450_example: LD2450 radar initialized successfully
-I (381) LD2450: Entered configuration mode
-I (431) LD2450: Firmware version: V1.02.25031210
-I (441) LD2450: Exited configuration mode
-I (451) ld2450_example: Radar firmware version: V1.02.25031210
-I (461) LD2450: Entered configuration mode
-I (471) LD2450: Exited configuration mode
-I (481) ld2450_example: Waiting for target detection events...
-I (2481) ld2450_example: Target frame received: 0 targets detected
-I (3481) ld2450_example: Target frame received: 1 targets detected
-I (3481) ld2450_example: Target 1: position (x=-358, y=1251) mm, speed=12 cm/s, distance=1302.3 mm, angle=15.9°
-
+I (332) ld2450_example: HLK-LD2450 Basic Example
+I (332) ld2450_example: Initializing LD2450 driver...
+I (352) LD2450: LD2450 driver initialized on UART2 (RX: GPIO16, TX: GPIO17, baud: 256000)
+I (352) LD2450: Auto-processing enabled with task priority 5
+I (1352) ld2450_example: Radar firmware version: V1.02.22062416
+I (1392) ld2450_example: Current tracking mode: Multi Target
+I (1432) ld2450_example: Set tracking mode to Multi Target
+I (4432) ld2450_example: ----- Radar Data -----
+I (4432) ld2450_example: Detected 1 targets:
+I (4432) ld2450_example: Target 1:
+I (4432) ld2450_example:   Position: X=245 mm, Y=1356 mm
+I (4442) ld2450_example:   Polar: Distance=1378.81 mm, Angle=-10.25°
+I (4452) ld2450_example:   Speed: 5 cm/s
+I (4452) ld2450_example:   Resolution: 78 mm
 ```
-
-When you move in front of the radar, you will see the target information change accordingly.
-
-## Troubleshooting
-
-If you don't see any target detection events:
-- Make sure the radar is connected correctly
-- Check that the radar has a clear field of view
-- Verify that the UART pins are configured correctly
-- Try moving around in front of the radar to trigger detection
-
-## Additional Features
-
-This example demonstrates only the basic functionality. The driver also supports:
-
-- Region filtering (include-only or exclude specific areas)
-- Single target or multi-target tracking modes
-- Bluetooth configuration
-- Factory reset and module restart
-- Baud rate configuration
-
-Check the driver API documentation for more information.
