@@ -1,24 +1,22 @@
 /**
  * @file ld2450.h
- * @brief Public API for HLK-LD2450 radar sensor driver
+ * @brief HLK-LD2450 1T2R 24G Multi-Target Status Detection Radar driver component
  * 
- * This header provides the public API for interacting with HLK-LD2450 
- * mmWave radar sensor modules. The driver supports both basic and
- * advanced functionality including:
- * - Target detection and tracking (single and multi-target modes)
- * - Configuration of detection zones (include/exclude regions)
- * - Bluetooth control
- * - Firmware information retrieval
+ * This component provides an ESP-IDF driver for the HLK-LD2450 radar sensor, 
+ * implementing the official communication protocol with emphasis on static memory 
+ * allocation and efficient data handling.
  * 
- * @copyright Copyright (c) 2025 NieRVoid
- * @license MIT License
+ * @note This driver is compatible with ESP-IDF v5.4 and later.
+ * 
+ * @author NieRVoid
+ * @date 2025-03-12
+ * @license MIT
  */
 
 #pragma once
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <stdlib.h>
 #include "esp_err.h"
 #include "driver/uart.h"
 
@@ -27,491 +25,233 @@ extern "C" {
 #endif
 
 /**
- * @brief Maximum number of targets that can be tracked simultaneously
- */
-#define LD2450_MAX_TARGETS 3
-
-/**
- * @brief Target tracking data from the radar sensor
- */
-typedef struct {
-    bool active;            /*!< Whether this target is active (detected) */
-    int16_t x;              /*!< X-coordinate in millimeters */
-    int16_t y;              /*!< Y-coordinate in millimeters */
-    int16_t speed;          /*!< Speed in cm/s (positive=approaching, negative=receding) */
-    uint16_t resolution;    /*!< Resolution/quality of detection (lower is better) */
-} ld2450_target_t;
-
-/**
- * @brief Callback function type for target data updates
- */
-typedef void (*ld2450_data_callback_t)(const ld2450_target_t targets[], 
-                                    size_t count, void *user_ctx);
-
-/**
- * @brief Supported baud rates for UART communication
+ * @brief Target tracking mode options
  */
 typedef enum {
-    LD2450_BAUD_RATE_9600   = 0x0001, /*!< 9600 bps */
-    LD2450_BAUD_RATE_19200  = 0x0002, /*!< 19200 bps */
-    LD2450_BAUD_RATE_38400  = 0x0003, /*!< 38400 bps */
-    LD2450_BAUD_RATE_57600  = 0x0004, /*!< 57600 bps */
-    LD2450_BAUD_RATE_115200 = 0x0005, /*!< 115200 bps */
-    LD2450_BAUD_RATE_230400 = 0x0006, /*!< 230400 bps */
-    LD2450_BAUD_RATE_256000 = 0x0007, /*!< 256000 bps (default) */
-    LD2450_BAUD_RATE_460800 = 0x0008, /*!< 460800 bps */
+    LD2450_MODE_SINGLE_TARGET = 0x0001, /*!< Track a single target */
+    LD2450_MODE_MULTI_TARGET = 0x0002   /*!< Track multiple targets (default) */
+} ld2450_tracking_mode_t;
+
+/**
+ * @brief Serial port baud rate options
+ */
+typedef enum {
+    LD2450_BAUD_9600   = 0x0001, /*!< 9600 baud */
+    LD2450_BAUD_19200  = 0x0002, /*!< 19200 baud */
+    LD2450_BAUD_38400  = 0x0003, /*!< 38400 baud */
+    LD2450_BAUD_57600  = 0x0004, /*!< 57600 baud */
+    LD2450_BAUD_115200 = 0x0005, /*!< 115200 baud */
+    LD2450_BAUD_230400 = 0x0006, /*!< 230400 baud */
+    LD2450_BAUD_256000 = 0x0007, /*!< 256000 baud (default) */
+    LD2450_BAUD_460800 = 0x0008  /*!< 460800 baud */
 } ld2450_baud_rate_t;
 
 /**
- * @brief Region filtering modes
+ * @brief Region filtering type options
  */
 typedef enum {
-    LD2450_REGION_FILTER_DISABLED = 0x0000, /*!< No region filtering */
-    LD2450_REGION_FILTER_INCLUDE  = 0x0001, /*!< Only detect targets inside defined regions */
-    LD2450_REGION_FILTER_EXCLUDE  = 0x0002, /*!< Only detect targets outside defined regions */
-} ld2450_region_filter_mode_t;
+    LD2450_FILTER_DISABLED = 0x0000,   /*!< Disable region filtering */
+    LD2450_FILTER_INCLUDE_ONLY = 0x0001, /*!< Only detect targets within specified regions */
+    LD2450_FILTER_EXCLUDE = 0x0002      /*!< Do not detect targets within specified regions */
+} ld2450_filter_type_t;
 
 /**
- * @brief Firmware version structure
+ * @brief Firmware version information
  */
 typedef struct {
-    uint16_t main_version;  /*!< Main firmware version */
-    uint32_t sub_version;   /*!< Sub-version */
+    uint16_t main_version;     /*!< Main version number */
+    uint32_t sub_version;      /*!< Sub-version number */
+    char version_string[16];   /*!< Formatted version string (e.g., "V1.02.22062416") */
 } ld2450_firmware_version_t;
 
 /**
- * @brief Configuration structure for driver initialization
+ * @brief Region definition for filtering (rectangular area)
+ */
+typedef struct {
+    int16_t x1;   /*!< X coordinate of first corner (mm) */
+    int16_t y1;   /*!< Y coordinate of first corner (mm) */
+    int16_t x2;   /*!< X coordinate of diagonal corner (mm) */
+    int16_t y2;   /*!< Y coordinate of diagonal corner (mm) */
+} ld2450_region_t;
+
+/**
+ * @brief Target information structure
+ */
+typedef struct {
+    int16_t x;                /*!< X coordinate (mm) */
+    int16_t y;                /*!< Y coordinate (mm) */
+    int16_t speed;            /*!< Speed (cm/s) */
+    uint16_t resolution;      /*!< Distance resolution (mm) */
+    float distance;           /*!< Calculated distance (mm) */
+    float angle;              /*!< Calculated angle in degrees */
+    bool valid;               /*!< Target validity flag */
+} ld2450_target_t;
+
+/**
+ * @brief Data frame structure containing target information
+ */
+typedef struct {
+    ld2450_target_t targets[3];  /*!< Data for up to 3 targets */
+    uint8_t count;               /*!< Number of valid targets (0-3) */
+    int64_t timestamp;           /*!< ESP timestamp when data was received */
+} ld2450_frame_t;
+
+/**
+ * @brief Driver configuration structure
  */
 typedef struct {
     uart_port_t uart_port;      /*!< UART port number */
+    int uart_rx_pin;            /*!< GPIO pin for UART RX */
+    int uart_tx_pin;            /*!< GPIO pin for UART TX */
     uint32_t uart_baud_rate;    /*!< UART baud rate */
-    int uart_tx_pin;            /*!< UART TX pin */
-    int uart_rx_pin;            /*!< UART RX pin */
+    bool auto_processing;       /*!< Enable automatic frame processing */
+    int task_priority;          /*!< Priority for auto processing task (if enabled) */
 } ld2450_config_t;
 
 /**
- * @brief Configuration parameters for combined operations
+ * @brief Target data callback function type
+ * 
+ * This function is called when new target data is available
+ * 
+ * @param frame Pointer to the frame containing target data
+ * @param user_ctx User context pointer passed during registration
  */
-typedef struct {
-    /* Tracking mode configuration */
-    bool update_tracking;         /*!< Whether to update tracking mode */
-    bool multi_target;            /*!< Multi-target mode if update_tracking is true */
-    
-    /* Region filtering configuration */
-    bool update_regions;          /*!< Whether to update region filtering */
-    ld2450_region_filter_mode_t region_mode;  /*!< Region filtering mode if update_regions is true */
-    int16_t regions[3][4];        /*!< Region coordinates [x1, y1, x2, y2] if update_regions is true */
-    size_t region_count;          /*!< Number of regions if update_regions is true */
-    
-    /* Baud rate configuration */
-    bool update_baud_rate;        /*!< Whether to update baud rate */
-    ld2450_baud_rate_t baud_rate; /*!< Baud rate if update_baud_rate is true */
-    
-    /* Bluetooth configuration */
-    bool update_bluetooth;        /*!< Whether to update Bluetooth status */
-    bool bluetooth_enabled;       /*!< Bluetooth enabled if update_bluetooth is true */
-    
-    /* Firmware information (read-only) */
-    uint16_t firmware_main;       /*!< Main firmware version */
-    uint32_t firmware_sub;        /*!< Sub-version */
-} ld2450_config_params_t;
+typedef void (*ld2450_target_cb_t)(const ld2450_frame_t *frame, void *user_ctx);
 
-/* Basic Driver API */
+/**
+ * @brief Default configuration for the LD2450 driver
+ */
+#define LD2450_DEFAULT_CONFIG() { \
+    .uart_port = UART_NUM_2, \
+    .uart_rx_pin = 16, \
+    .uart_tx_pin = 17, \
+    .uart_baud_rate = 256000, \
+    .auto_processing = true, \
+    .task_priority = 5, \
+}
 
 /**
  * @brief Initialize the LD2450 radar driver
  * 
- * @param[in] config Driver configuration
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid configuration
- *         - ESP_ERR_INVALID_STATE: Driver already initialized
- *         - ESP_ERR_NO_MEM: Memory allocation failed
+ * @param config Pointer to driver configuration structure
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
 esp_err_t ld2450_init(const ld2450_config_t *config);
 
 /**
- * @brief Deinitialize the LD2450 radar driver
+ * @brief Deinitialize the LD2450 radar driver and release resources
  * 
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Driver not initialized
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
 esp_err_t ld2450_deinit(void);
 
 /**
- * @brief Register a callback for target data updates
+ * @brief Register a callback function for target data
  * 
- * @param[in] callback Callback function
- * @param[in] user_ctx User context to pass to the callback
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Driver not initialized
- *         - ESP_ERR_INVALID_ARG: Invalid callback
+ * @param callback Function pointer to call when new target data is available
+ * @param user_ctx User context pointer passed to the callback function
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
-esp_err_t ld2450_register_data_callback(ld2450_data_callback_t callback, void *user_ctx);
-
-/* Configuration Mode API */
+esp_err_t ld2450_register_target_callback(ld2450_target_cb_t callback, void *user_ctx);
 
 /**
- * @brief Enter configuration mode
+ * @brief Process a radar data frame manually
  * 
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in idle state
+ * This function allows processing a raw data frame without using the automatic
+ * processing feature. Useful for custom data acquisition.
+ * 
+ * @param data Raw frame data buffer
+ * @param length Length of the data buffer in bytes
+ * @param frame Pointer to frame structure to store parsed results
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
-esp_err_t ld2450_enter_config_mode(void);
+esp_err_t ld2450_process_frame(const uint8_t *data, size_t length, ld2450_frame_t *frame);
 
 /**
- * @brief Exit configuration mode
+ * @brief Set target tracking mode (single or multi-target)
  * 
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in configuration mode
+ * @param mode Tracking mode to set
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
-esp_err_t ld2450_exit_config_mode(void);
+esp_err_t ld2450_set_tracking_mode(ld2450_tracking_mode_t mode);
 
 /**
- * @brief Set the tracking mode
+ * @brief Get current target tracking mode
  * 
- * @param[in] multi_target true for multi-target mode, false for single-target mode
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in configuration mode
+ * @param mode Pointer to store the current tracking mode
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
-esp_err_t ld2450_set_tracking_mode(bool multi_target);
+esp_err_t ld2450_get_tracking_mode(ld2450_tracking_mode_t *mode);
 
 /**
- * @brief Get the current tracking mode
+ * @brief Get firmware version information
  * 
- * @param[out] multi_target Will be set to true for multi-target mode, false for single-target mode
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in configuration mode
- *         - ESP_ERR_INVALID_ARG: Invalid pointer
- */
-esp_err_t ld2450_get_tracking_mode(bool *multi_target);
-
-/**
- * @brief Get the firmware version
- * 
- * @param[out] version Structure to store firmware version information
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in configuration mode
- *         - ESP_ERR_INVALID_ARG: Invalid pointer
+ * @param version Pointer to structure to store version information
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
 esp_err_t ld2450_get_firmware_version(ld2450_firmware_version_t *version);
 
 /**
- * @brief Set the UART baud rate
+ * @brief Set serial port baud rate
  * 
- * @param[in] baud_rate Baud rate to set
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in configuration mode
- *         - ESP_ERR_INVALID_ARG: Invalid baud rate
+ * This setting is saved and takes effect after module restart
+ * 
+ * @param baud_rate Baud rate to set
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
 esp_err_t ld2450_set_baud_rate(ld2450_baud_rate_t baud_rate);
 
 /**
- * @brief Restore factory settings
+ * @brief Restore factory default settings
  * 
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in configuration mode
+ * This setting takes effect after module restart
+ * 
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
 esp_err_t ld2450_restore_factory_settings(void);
 
 /**
  * @brief Restart the radar module
  * 
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in configuration mode
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
-esp_err_t ld2450_restart(void);
+esp_err_t ld2450_restart_module(void);
 
 /**
- * @brief Enable or disable Bluetooth
+ * @brief Enable or disable Bluetooth functionality
  * 
- * @param[in] enable true to enable Bluetooth, false to disable
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in configuration mode
+ * This setting is persistent after power-off and takes effect after restart
+ * 
+ * @param enable true to enable Bluetooth, false to disable
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
 esp_err_t ld2450_set_bluetooth(bool enable);
 
 /**
- * @brief Get the Bluetooth MAC address
+ * @brief Get the module's MAC address
  * 
- * @param[out] mac Buffer to store the 6-byte MAC address
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in configuration mode
- *         - ESP_ERR_INVALID_ARG: Invalid pointer
+ * @param mac Buffer to store the 6-byte MAC address
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
 esp_err_t ld2450_get_mac_address(uint8_t mac[6]);
 
 /**
- * @brief Get the region filter configuration
+ * @brief Configure region filtering
  * 
- * @param[out] mode Filter mode
- * @param[out] regions Array to store region coordinates [x1, y1, x2, y2]
- * @param[out] region_count Number of regions
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in configuration mode
- *         - ESP_ERR_INVALID_ARG: Invalid pointer
+ * @param type Filtering type (disabled, include only, exclude)
+ * @param regions Array of 3 region definitions
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
-esp_err_t ld2450_get_region_filter(ld2450_region_filter_mode_t *mode, 
-                                 int16_t regions[][4], 
-                                 size_t *region_count);
+esp_err_t ld2450_set_region_filter(ld2450_filter_type_t type, const ld2450_region_t regions[3]);
 
 /**
- * @brief Set the region filter configuration
+ * @brief Query current region filtering configuration
  * 
- * @param[in] mode Filter mode
- * @param[in] regions Array of region coordinates [x1, y1, x2, y2]
- * @param[in] region_count Number of regions (0-3)
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_STATE: Not in configuration mode
- *         - ESP_ERR_INVALID_ARG: Invalid arguments
+ * @param type Pointer to store the filtering type
+ * @param regions Array of 3 region definitions to store the current configuration
+ * @return esp_err_t ESP_OK on success, error code otherwise
  */
-esp_err_t ld2450_set_region_filter(ld2450_region_filter_mode_t mode,
-                                 const int16_t regions[][4],
-                                 size_t region_count);
-
-/* Advanced Commands API */
-
-/**
- * @brief Update the baud rate and handle ESP32 UART reconfiguration
- * 
- * @param[in] baud_rate New baud rate
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid baud rate
- */
-esp_err_t ld2450_cmd_update_baud_rate(ld2450_baud_rate_t baud_rate);
-
-/**
- * @brief Perform factory reset and restart
- * 
- * @return esp_err_t
- *         - ESP_OK: Success
- */
-esp_err_t ld2450_cmd_factory_reset_and_restart(void);
-
-/**
- * @brief Configure tracking mode with automatic mode switching
- * 
- * @param[in] multi_target true for multi-target, false for single-target
- * @return esp_err_t
- *         - ESP_OK: Success
- */
-esp_err_t ld2450_cmd_configure_tracking(bool multi_target);
-
-/**
- * @brief Get firmware version as a string
- * 
- * @param[out] version_str Buffer to store version string
- * @param[in] str_size Size of the buffer
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid arguments
- */
-esp_err_t ld2450_cmd_get_firmware_info(char *version_str, size_t str_size);
-
-/**
- * @brief Get Bluetooth MAC address as a formatted string
- * 
- * @param[out] mac_str Buffer to store MAC string (format: XX:XX:XX:XX:XX:XX)
- * @param[in] str_size Size of the buffer (minimum 18 bytes)
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid arguments
- */
-esp_err_t ld2450_cmd_get_bluetooth_mac(char *mac_str, size_t str_size);
-
-/**
- * @brief Configure Bluetooth functionality
- * 
- * @param[in] enable true to enable Bluetooth, false to disable
- * @return esp_err_t
- *         - ESP_OK: Success
- */
-esp_err_t ld2450_cmd_configure_bluetooth(bool enable);
-
-/**
- * @brief Set up detection zones with automatic mode switching
- * 
- * @param[in] mode Filter mode
- * @param[in] regions Array of region coordinates [x1, y1, x2, y2]
- * @param[in] region_count Number of regions (0-3)
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid arguments
- */
-esp_err_t ld2450_cmd_set_detection_zones(ld2450_region_filter_mode_t mode,
-                                      const int16_t regions[][4],
-                                      size_t region_count);
-
-/**
- * @brief Get current detection zones configuration
- * 
- * @param[out] mode Filter mode
- * @param[out] regions Array to store region coordinates [x1, y1, x2, y2]
- * @param[out] region_count Number of regions
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid pointers
- */
-esp_err_t ld2450_cmd_get_detection_zones(ld2450_region_filter_mode_t *mode,
-                                      int16_t regions[][4],
-                                      size_t *region_count);
-
-/**
- * @brief Create a circular zone as a rectangular approximation
- * 
- * @param[in] center_x X-coordinate of center (mm)
- * @param[in] center_y Y-coordinate of center (mm)
- * @param[in] radius Radius in mm
- * @param[in] include Whether to use as include or exclude zone (informational only)
- * @param[out] region_out Output region coordinates [x1, y1, x2, y2]
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid pointer
- */
-esp_err_t ld2450_cmd_create_circular_zone(int16_t center_x, int16_t center_y,
-                                       uint16_t radius, bool include,
-                                       int16_t region_out[4]);
-
-/**
- * @brief Check if a point lies within a circle
- * 
- * @param[in] center_x X-coordinate of circle center (mm)
- * @param[in] center_y Y-coordinate of circle center (mm)
- * @param[in] radius Circle radius in mm
- * @param[in] point_x X-coordinate of point to check (mm)
- * @param[in] point_y Y-coordinate of point to check (mm)
- * @param[out] result Will be set to true if point is in circle, false otherwise
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid pointer
- */
-esp_err_t ld2450_cmd_is_point_in_circle(int16_t center_x, int16_t center_y,
-                                      uint16_t radius, int16_t point_x,
-                                      int16_t point_y, bool *result);
-
-/**
- * @brief Convert target data to JSON format
- * 
- * @param[in] targets Array of target data
- * @param[in] count Number of targets
- * @param[out] json_buffer Buffer to store JSON string
- * @param[in] buffer_size Size of the buffer
- * @param[out] output_len Actual length of the JSON output
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid arguments
- *         - ESP_ERR_NO_MEM: Buffer too small
- */
-esp_err_t ld2450_cmd_targets_to_json(const ld2450_target_t targets[],
-                                   size_t count, char *json_buffer,
-                                   size_t buffer_size, size_t *output_len);
-
-/**
- * @brief Configure multiple settings in one operation
- * 
- * @param[in] params Configuration parameters
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid arguments
- */
-esp_err_t ld2450_cmd_configure_and_restart(ld2450_config_params_t *params);
-
-/**
- * @brief Get all radar parameters
- * 
- * @param[out] params Configuration parameters structure to fill
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid arguments
- */
-esp_err_t ld2450_cmd_get_all_parameters(ld2450_config_params_t *params);
-
-/* Utility Functions */
-
-/**
- * @brief Calculate target speed in meters per second
- * 
- * @param[in] target Target structure
- * @return float Speed in meters per second
- */
-float ld2450_calculate_speed_mps(const ld2450_target_t *target);
-
-/**
- * @brief Calculate distance from radar to target
- * 
- * @param[in] target Target structure
- * @return uint32_t Distance in millimeters
- */
-uint32_t ld2450_calculate_distance_mm(const ld2450_target_t *target);
-
-/**
- * @brief Calculate angle to target
- * 
- * @param[in] target Target structure
- * @return float Angle in degrees (0-359)
- */
-float ld2450_calculate_angle_degrees(const ld2450_target_t *target);
-
-/**
- * @brief Calculate target statistics from parsed data
- * 
- * @param[in] targets Array of target data
- * @param[in] count Number of targets
- * @param[out] avg_x Average X coordinate (can be NULL)
- * @param[out] avg_y Average Y coordinate (can be NULL)
- * @param[out] avg_speed Average speed (can be NULL)
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid targets array
- *         - ESP_ERR_NOT_FOUND: No active targets
- */
-esp_err_t ld2450_calculate_target_statistics(const ld2450_target_t targets[], size_t count,
-                                          int16_t *avg_x, int16_t *avg_y, int16_t *avg_speed);
-
-/**
- * @brief Find the closest target to reference coordinates
- * 
- * @param[in] targets Array of target data
- * @param[in] count Number of targets
- * @param[in] ref_x Reference X coordinate
- * @param[in] ref_y Reference Y coordinate
- * @param[out] closest_idx Index of closest target
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid arguments
- *         - ESP_ERR_NOT_FOUND: No active targets
- */
-esp_err_t ld2450_find_closest_target(const ld2450_target_t targets[], size_t count,
-                                  int16_t ref_x, int16_t ref_y, size_t *closest_idx);
-
-/**
- * @brief Find the target with highest signal quality
- * 
- * @param[in] targets Array of target data
- * @param[in] count Number of targets
- * @param[out] best_idx Index of highest quality target
- * @return esp_err_t
- *         - ESP_OK: Success
- *         - ESP_ERR_INVALID_ARG: Invalid arguments
- *         - ESP_ERR_NOT_FOUND: No active targets
- */
-esp_err_t ld2450_find_best_quality_target(const ld2450_target_t targets[], size_t count,
-                                       size_t *best_idx);
+esp_err_t ld2450_get_region_filter(ld2450_filter_type_t *type, ld2450_region_t regions[3]);
 
 #ifdef __cplusplus
 }
