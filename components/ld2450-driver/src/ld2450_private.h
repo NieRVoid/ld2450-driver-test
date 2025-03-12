@@ -210,33 +210,6 @@ esp_err_t ld2450_send_command(uint16_t cmd_word, const uint8_t *cmd_value,
  */
 esp_err_t ld2450_process_data_frame(const uint8_t *buffer, size_t length);
 
-/**
- * @brief Configuration parameters structure for combined operations
- */
- typedef struct {
-    /* Tracking mode configuration */
-    bool update_tracking;
-    bool multi_target;
-    
-    /* Region filtering configuration */
-    bool update_regions;
-    ld2450_region_filter_mode_t region_mode;
-    int16_t regions[3][4];
-    size_t region_count;
-    
-    /* Baud rate configuration */
-    bool update_baud_rate;
-    ld2450_baud_rate_t baud_rate;
-    
-    /* Bluetooth configuration */
-    bool update_bluetooth;
-    bool bluetooth_enabled;
-    
-    /* Firmware information */
-    uint16_t firmware_main;
-    uint32_t firmware_sub;
-} ld2450_config_params_t;
-
 #ifdef __cplusplus
 }
 #endif
