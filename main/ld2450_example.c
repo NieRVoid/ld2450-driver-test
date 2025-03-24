@@ -149,7 +149,7 @@
      
      // Configure radar with example settings
      vTaskDelay(pdMS_TO_TICKS(1000));  // Give the radar some time to initialize
-     configure_radar();
+    //  configure_radar();
      
      // Main loop - display radar data every 3 seconds
      while (1) {
