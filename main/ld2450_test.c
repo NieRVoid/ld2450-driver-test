@@ -1,13 +1,44 @@
 #include <stdio.h>
 #include <string.h>
-#include <inttypes.h>  // Added for PRIu16, PRIu32 macros
+#include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "driver/gpio.h"
+#include "esp_timer.h"
 #include "ld2450.h"
 
 static const char *TAG = "LD2450_TEST";
+
+// Button configuration
+#define BOOT_BUTTON_GPIO          0
+#define BUTTON_DEBOUNCE_TIME_MS   50
+#define DOUBLE_PRESS_INTERVAL_MS  500
+
+// Global variables for button state and program control
+static volatile bool g_exit_app = false;
+static int64_t g_last_button_press = 0;
+static int64_t g_last_display_time = 0;
+static const int64_t DISPLAY_INTERVAL_US = 3000000; // 3 seconds in microseconds
+
+// GPIO interrupt handler
+static void IRAM_ATTR button_isr_handler(void* arg) {
+    int64_t current_time = esp_timer_get_time();
+    int64_t diff = current_time - g_last_button_press;
+    
+    // Debounce check
+    if (diff < BUTTON_DEBOUNCE_TIME_MS * 1000) {
+        return;
+    }
+    
+    // Check for double press
+    if (diff < DOUBLE_PRESS_INTERVAL_MS * 1000) {
+        g_exit_app = true;
+    }
+    
+    g_last_button_press = current_time;
+}
 
 // Utility function to print buffer as hex dump
 void print_hex_dump(const char* prefix, const uint8_t* data, size_t len) {
@@ -63,22 +94,30 @@ void print_error_debug_info(void) {
 static void radar_data_callback(const ld2450_frame_t *frame, void *user_ctx) {
     if (!frame) return;
     
-    ESP_LOGI(TAG, "---------- Radar Data Frame ----------");
-    ESP_LOGI(TAG, "Timestamp: %lld ms", frame->timestamp / 1000);
-    ESP_LOGI(TAG, "Number of targets detected: %d", frame->count);
+    int64_t current_time = esp_timer_get_time();
     
-    for (int i = 0; i < frame->count; i++) {
-        const ld2450_target_t *target = &frame->targets[i];
-        if (target->valid) {
-            ESP_LOGI(TAG, "Target #%d:", i + 1);
-            ESP_LOGI(TAG, "  Position:   (%d, %d) mm", target->x, target->y);
-            ESP_LOGI(TAG, "  Distance:   %.2f mm", target->distance);
-            ESP_LOGI(TAG, "  Angle:      %.1f°", target->angle);
-            ESP_LOGI(TAG, "  Speed:      %d cm/s", target->speed);
-            ESP_LOGI(TAG, "  Resolution: %d mm", target->resolution);
+    // Only print radar data every 3 seconds
+    if (current_time - g_last_display_time >= DISPLAY_INTERVAL_US) {
+        ESP_LOGI(TAG, "---------- Radar Data Frame ----------");
+        ESP_LOGI(TAG, "Timestamp: %lld ms", frame->timestamp / 1000);
+        ESP_LOGI(TAG, "Number of targets detected: %d", frame->count);
+        
+        for (int i = 0; i < frame->count; i++) {
+            const ld2450_target_t *target = &frame->targets[i];
+            if (target->valid) {
+                ESP_LOGI(TAG, "Target #%d:", i + 1);
+                ESP_LOGI(TAG, "  Position:   (%d, %d) mm", target->x, target->y);
+                ESP_LOGI(TAG, "  Distance:   %.2f mm", target->distance);
+                ESP_LOGI(TAG, "  Angle:      %.1f°", target->angle);
+                ESP_LOGI(TAG, "  Speed:      %d cm/s", target->speed);
+                ESP_LOGI(TAG, "  Resolution: %d mm", target->resolution);
+            }
         }
+        ESP_LOGI(TAG, "--------------------------------------\n");
+        
+        // Update last display time
+        g_last_display_time = current_time;
     }
-    ESP_LOGI(TAG, "--------------------------------------\n");
 }
 
 void print_mac_address(uint8_t mac[6]) {
@@ -105,6 +144,20 @@ void print_region_filter(ld2450_filter_type_t type, ld2450_region_t regions[3]) 
 
 void app_main(void) {
     ESP_LOGI(TAG, "Starting LD2450 Radar Test");
+    
+    // Configure GPIO for boot button
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << BOOT_BUTTON_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_NEGEDGE,
+    };
+    gpio_config(&io_conf);
+    
+    // Install GPIO ISR handler
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(BOOT_BUTTON_GPIO, button_isr_handler, NULL);
     
     // Initialize LD2450 with default configuration
     ld2450_config_t config = LD2450_DEFAULT_CONFIG();
@@ -224,12 +277,21 @@ void app_main(void) {
     
     ESP_LOGI(TAG, "===================================\n");
     
+    // Initialize last display time
+    g_last_display_time = esp_timer_get_time();
+    
     // Wait for and process radar data
     ESP_LOGI(TAG, "Waiting for radar detection data...");
-    ESP_LOGI(TAG, "(Press Ctrl+C to exit)");
+    ESP_LOGI(TAG, "(Press boot button twice quickly to exit)");
     
     // Main loop - the callback will handle incoming data
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+    while (!g_exit_app) {
+        vTaskDelay(pdMS_TO_TICKS(100)); // Check exit flag every 100ms
     }
+    
+    // Clean up before exiting
+    ESP_LOGI(TAG, "Exiting program...");
+    gpio_isr_handler_remove(BOOT_BUTTON_GPIO);
+    ld2450_deinit();
+    ESP_LOGI(TAG, "Cleanup complete, goodbye!");
 }
