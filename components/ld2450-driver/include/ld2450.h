@@ -253,6 +253,19 @@ esp_err_t ld2450_set_region_filter(ld2450_filter_type_t type, const ld2450_regio
  */
 esp_err_t ld2450_get_region_filter(ld2450_filter_type_t *type, ld2450_region_t regions[3]);
 
+/**
+ * @brief Get the last error data buffer for debugging
+ * 
+ * This function retrieves the buffer content from the last communication error
+ * to help diagnose protocol issues.
+ * 
+ * @param buffer Buffer to copy the error data into
+ * @param buffer_size Size of the provided buffer
+ * @param length Pointer to store the actual length of error data
+ * @return esp_err_t ESP_OK on success, error code otherwise
+ */
+esp_err_t ld2450_get_last_error_data(uint8_t *buffer, size_t buffer_size, size_t *length);
+
 #ifdef __cplusplus
 }
 #endif

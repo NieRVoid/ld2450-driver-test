@@ -121,6 +121,10 @@ esp_err_t ld2450_init(const ld2450_config_t *config)
     instance->frame_synced = false;
     instance->in_config_mode = false;
     
+    // Initialize header pattern for fast detection
+    static frame_header_t header_pattern;
+    memcpy(header_pattern.bytes, LD2450_DATA_FRAME_HEADER, 4);
+    
     // Set initialized flag
     instance->initialized = true;
     
@@ -239,6 +243,97 @@ esp_err_t ld2450_process_frame(const uint8_t *data, size_t length, ld2450_frame_
     }
     
     return ld2450_parse_frame(data, length, frame);
+}
+
+/**
+ * @brief Processing task for radar data
+ * 
+ * This task continuously processes UART events to handle incoming radar data.
+ * 
+ * @param arg Task argument (not used)
+ */
+void ld2450_processing_task(void *arg)
+{
+    ld2450_state_t *instance = ld2450_get_instance();
+    
+    if (!instance || !instance->initialized) {
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    ESP_LOGI(TAG, "LD2450 processing task started");
+    
+    // Initialize for adaptive delay
+    instance->idle_count = 0;
+    static uint8_t data_buffer[LD2450_UART_RX_BUF_SIZE];
+    
+    while (instance->initialized) {
+        bool processed_data = false;
+        
+        // Skip processing if in configuration mode
+        if (instance->in_config_mode) {
+            // Give longer delay while in config mode to not interfere with config commands
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+        
+        // Process UART events
+        uart_event_t event;
+        if (xQueueReceive(instance->uart_queue, &event, 0)) {
+            switch (event.type) {
+                case UART_DATA:
+                {
+                    // Read data from UART
+                    int len = uart_read_bytes(instance->uart_port, data_buffer, 
+                                             MIN(event.size, LD2450_UART_RX_BUF_SIZE),
+                                             pdMS_TO_TICKS(10));
+                    
+                    if (len > 0) {
+                        // Process the received data using optimized handler
+                        ld2450_uart_event_handler(data_buffer, len);
+                        processed_data = true;
+                    }
+                    break;
+                }
+                case UART_FIFO_OVF:
+                    ESP_LOGW(TAG, "UART FIFO overflow detected");
+                    uart_flush_input(instance->uart_port);
+                    xQueueReset(instance->uart_queue);
+                    break;
+                case UART_BUFFER_FULL:
+                    ESP_LOGW(TAG, "UART buffer full");
+                    uart_flush_input(instance->uart_port);
+                    xQueueReset(instance->uart_queue);
+                    break;
+                case UART_BREAK:
+                case UART_FRAME_ERR:
+                case UART_PARITY_ERR:
+                case UART_DATA_BREAK:
+                case UART_PATTERN_DET:
+                    // Log and ignore these events
+                    ESP_LOGD(TAG, "UART event: %d", event.type);
+                    break;
+                default:
+                    ESP_LOGD(TAG, "Unhandled UART event: %d", event.type);
+                    break;
+            }
+        }
+        
+        // Adaptive delay based on activity
+        if (processed_data) {
+            instance->idle_count = 0;
+            // Yield immediately to process more data
+            taskYIELD();
+        } else {
+            instance->idle_count++;
+            // Adaptive delay based on activity (max 50ms)
+            uint32_t delay_ms = MIN(instance->idle_count, 10) * 5;
+            vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        }
+    }
+    
+    ESP_LOGI(TAG, "LD2450 processing task stopped");
+    vTaskDelete(NULL);
 }
 
 /* 
