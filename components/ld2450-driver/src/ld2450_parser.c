@@ -153,6 +153,16 @@ esp_err_t ld2450_handle_data_frame(const uint8_t *data, size_t len)
         return ret;
     }
     
+    // Store the latest frame for logging purposes
+    if (xSemaphoreTake(instance->mutex, 0) == pdTRUE) {
+        instance->last_frame = frame;
+        instance->last_frame_valid = true;
+        xSemaphoreGive(instance->mutex);
+    }
+    
+    // Log the frame periodically based on configuration
+    ld2450_log_radar_frame(&frame, false);
+    
     // Call the callback if registered - minimize mutex protected region
     if (instance->target_callback != NULL) {
         // Create a local copy of the frame before calling callback

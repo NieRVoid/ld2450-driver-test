@@ -153,6 +153,13 @@ typedef struct {
     /** @brief Error debug data */
     uint8_t error_buffer[LD2450_ERROR_BUFFER_SIZE];
     size_t error_buffer_len;
+    
+    /** @brief Logging configuration */
+    ld2450_log_level_t log_level;
+    uint32_t data_log_interval_ms;
+    int64_t last_data_log_time;
+    ld2450_frame_t last_frame;
+    bool last_frame_valid;
 } ld2450_state_t;
 
 /**
@@ -237,6 +244,14 @@ esp_err_t ld2450_handle_data_frame(const uint8_t *data, size_t len);
  * @return esp_err_t ESP_OK on success, error code otherwise
  */
 esp_err_t ld2450_validate_ack(const uint8_t *ack, size_t len, ld2450_cmd_t cmd);
+
+/**
+ * @brief Format and log a radar data frame based on current log level
+ * 
+ * @param frame Pointer to frame data to log
+ * @param force Force logging regardless of interval
+ */
+void ld2450_log_radar_frame(const ld2450_frame_t *frame, bool force);
 
 #ifdef __cplusplus
 }

@@ -19,8 +19,7 @@ static const char *TAG = "LD2450_TEST";
 // Global variables for button state and program control
 static volatile bool g_exit_app = false;
 static int64_t g_last_button_press = 0;
-static int64_t g_last_display_time = 0;
-static const int64_t DISPLAY_INTERVAL_US = 3000000; // 3 seconds in microseconds
+static int64_t g_last_frame_time = 0;
 
 // GPIO interrupt handler
 static void IRAM_ATTR button_isr_handler(void* arg) {
@@ -90,33 +89,18 @@ void print_error_debug_info(void) {
     }
 }
 
-// Callback function to handle radar detection data
+// Simplified callback function that doesn't duplicate logging functionality
 static void radar_data_callback(const ld2450_frame_t *frame, void *user_ctx) {
     if (!frame) return;
     
-    int64_t current_time = esp_timer_get_time();
+    // Just update the last frame time
+    g_last_frame_time = frame->timestamp;
     
-    // Only print radar data every 3 seconds
-    if (current_time - g_last_display_time >= DISPLAY_INTERVAL_US) {
-        ESP_LOGI(TAG, "---------- Radar Data Frame ----------");
-        ESP_LOGI(TAG, "Timestamp: %lld ms", frame->timestamp / 1000);
-        ESP_LOGI(TAG, "Number of targets detected: %d", frame->count);
-        
-        for (int i = 0; i < frame->count; i++) {
-            const ld2450_target_t *target = &frame->targets[i];
-            if (target->valid) {
-                ESP_LOGI(TAG, "Target #%d:", i + 1);
-                ESP_LOGI(TAG, "  Position:   (%d, %d) mm", target->x, target->y);
-                ESP_LOGI(TAG, "  Distance:   %.2f mm", target->distance);
-                ESP_LOGI(TAG, "  Angle:      %.1f°", target->angle);
-                ESP_LOGI(TAG, "  Speed:      %d cm/s", target->speed);
-                ESP_LOGI(TAG, "  Resolution: %d mm", target->resolution);
-            }
-        }
-        ESP_LOGI(TAG, "--------------------------------------\n");
-        
-        // Update last display time
-        g_last_display_time = current_time;
+    // Optional: Track target count changes (as a simple example of application logic)
+    static int prev_target_count = -1;
+    if (frame->count != prev_target_count) {
+        ESP_LOGI(TAG, "Target count changed: %d → %d", prev_target_count, frame->count);
+        prev_target_count = frame->count;
     }
 }
 
@@ -162,6 +146,10 @@ void app_main(void) {
     // Initialize LD2450 with default configuration
     ld2450_config_t config = LD2450_DEFAULT_CONFIG();
     
+    // Configure the component for verbose logging
+    config.log_level = LD2450_LOG_VERBOSE;  // Enable all component logs
+    config.data_log_interval_ms = 3000;     // Set to 3 seconds to match original display interval
+    
     // Print configuration settings
     ESP_LOGI(TAG, "Initializing LD2450 with:");
     ESP_LOGI(TAG, "  UART Port: %d", config.uart_port);
@@ -169,6 +157,8 @@ void app_main(void) {
     ESP_LOGI(TAG, "  TX Pin: GPIO%d", config.uart_tx_pin);
     ESP_LOGI(TAG, "  Baud Rate: %lu", config.uart_baud_rate);
     ESP_LOGI(TAG, "  Auto Processing: %s", config.auto_processing ? "Enabled" : "Disabled");
+    ESP_LOGI(TAG, "  Log Level: %d (VERBOSE)", config.log_level);
+    ESP_LOGI(TAG, "  Data Log Interval: %lu ms", config.data_log_interval_ms);
     
     esp_err_t ret = ld2450_init(&config);
     if (ret != ESP_OK) {
@@ -277,16 +267,25 @@ void app_main(void) {
     
     ESP_LOGI(TAG, "===================================\n");
     
-    // Initialize last display time
-    g_last_display_time = esp_timer_get_time();
+    // Initialize last frame time
+    g_last_frame_time = esp_timer_get_time();
     
     // Wait for and process radar data
     ESP_LOGI(TAG, "Waiting for radar detection data...");
     ESP_LOGI(TAG, "(Press boot button twice quickly to exit)");
     
-    // Main loop - the callback will handle incoming data
+    // Main loop - the component will handle logging
+    uint32_t count = 0;
     while (!g_exit_app) {
         vTaskDelay(pdMS_TO_TICKS(100)); // Check exit flag every 100ms
+        
+        // Force log current frame every 30 seconds regardless of interval
+        count++;
+        if (count >= 300) {  // ~30 seconds
+            count = 0;
+            ESP_LOGI(TAG, "Requesting on-demand radar data frame:");
+            ld2450_log_frame_data();  // Use the component's logging function
+        }
     }
     
     // Clean up before exiting
