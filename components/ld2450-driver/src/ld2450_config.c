@@ -454,32 +454,58 @@ esp_err_t ld2450_get_firmware_version(ld2450_firmware_version_t *version)
         return ret;
     }
     
-    // Query firmware version
-    ret = ld2450_send_command(LD2450_CMD_READ_FW_VERSION, NULL, 0, 
-                             ack_buffer, &ack_len, LD2450_CONFIG_TIMEOUT_MS);
+    // Allow extra settling time after entering config mode
+    vTaskDelay(pdMS_TO_TICKS(100));
     
-    if (ret == ESP_OK && ack_len >= 22) {  // Make sure we have enough data (header(4) + len(2) + cmd(2) + status(2) + fw_type(2) + main_ver(2) + sub_ver(4) + footer(4))
-        // Extract firmware version information based on protocol documentation
-        // Main version is at offset 12-13 (little-endian)
-        version->main_version = ack_buffer[12] | (ack_buffer[13] << 8);
+    // Flush any pending data in UART buffer before sending command
+    uart_flush(instance->uart_port);
+    
+    // Clear UART event queue to ensure no old events interfere
+    uart_event_t event;
+    while (xQueueReceive(instance->uart_queue, &event, 0) == pdTRUE) {
+        // Just drain the queue
+    }
+    
+    // Try up to 3 times with shorter timeout
+    for (int attempt = 0; attempt < 3; attempt++) {
+        ESP_LOGI(TAG, "Querying firmware version, attempt %d", attempt + 1);
         
-        // Sub-version is at offset 14-17 (little-endian)
-        version->sub_version = ack_buffer[14] | 
-                              (ack_buffer[15] << 8) | 
-                              ((uint32_t)ack_buffer[16] << 16) | 
-                              ((uint32_t)ack_buffer[17] << 24);
+        // Query firmware version with a shorter timeout (1 second instead of 3)
+        ret = ld2450_send_command(LD2450_CMD_READ_FW_VERSION, NULL, 0, 
+                                 ack_buffer, &ack_len, 1000);
         
-        // Format version string according to the protocol example (V1.02.22062416)
-        // Main version is split: lower byte is the first number, upper byte is after the first dot
-        snprintf(version->version_string, sizeof(version->version_string),
-                "V%u.%02u.%08lX", 
-                version->main_version & 0xFF,         // Lower byte of main version
-                (version->main_version >> 8) & 0xFF,  // Upper byte of main version
-                (unsigned long)version->sub_version); // Sub-version as a hex value
-        
-        ESP_LOGI(TAG, "Firmware version: %s", version->version_string);
-    } else {
-        ESP_LOGE(TAG, "Failed to read firmware version or invalid response");
+        if (ret == ESP_OK && ack_len >= 22) {
+            // Extract firmware version information based on protocol documentation
+            // Main version is at offset 12-13 (little-endian)
+            version->main_version = ack_buffer[12] | (ack_buffer[13] << 8);
+            
+            // Sub-version is at offset 14-17 (little-endian)
+            version->sub_version = ack_buffer[14] | 
+                                  (ack_buffer[15] << 8) | 
+                                  ((uint32_t)ack_buffer[16] << 16) | 
+                                  ((uint32_t)ack_buffer[17] << 24);
+            
+            // Format version string according to the protocol example (V1.02.22062416)
+            // Per protocol: high byte is first digit, low byte is digits after first dot
+            snprintf(version->version_string, sizeof(version->version_string),
+                    "V%u.%02u.%08lu", 
+                    (version->main_version >> 8) & 0xFF,  // High byte (0x01 -> 1)
+                    version->main_version & 0xFF,        // Low byte (0x02 -> 02)
+                    (unsigned long)version->sub_version); // Sub-version (0x22062416 -> 22062416)
+            
+            ESP_LOGI(TAG, "Firmware version: %s", version->version_string);
+            break; // Success, exit retry loop
+        } else {
+            ESP_LOGW(TAG, "Attempt %d failed, %s", attempt + 1, esp_err_to_name(ret));
+            // Short delay before retrying
+            vTaskDelay(pdMS_TO_TICKS(200));
+            // Flush UART again
+            uart_flush(instance->uart_port);
+        }
+    }
+    
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read firmware version after multiple attempts");
         ret = ESP_ERR_INVALID_RESPONSE;
     }
     

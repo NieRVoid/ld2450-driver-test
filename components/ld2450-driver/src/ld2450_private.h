@@ -51,6 +51,9 @@ extern "C" {
 /** @brief Stack size for the processing task (replaces CONFIG_LD2450_TASK_STACK_SIZE) */
 #define LD2450_TASK_STACK_SIZE 4096
 
+/** @brief Always compute derived values (distance, angle) */
+#define LD2450_COMPUTE_DERIVED_VALUES 1
+
 /** @brief Error debug data buffer size */
 #define LD2450_ERROR_BUFFER_SIZE 256
 

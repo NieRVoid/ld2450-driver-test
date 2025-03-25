@@ -374,14 +374,33 @@ void ld2450_log_radar_frame(const ld2450_frame_t *frame, bool force)
     ESP_LOGI(TAG, "--- RADAR FRAME DATA [t=%lld] ---", frame->timestamp / 1000);
     ESP_LOGI(TAG, "Targets detected: %d", frame->count);
     
+    // mm
     for (int i = 0; i < frame->count; i++) {
         const ld2450_target_t *target = &frame->targets[i];
         if (target->valid) {
-            ESP_LOGI(TAG, "Target #%d: pos=(%d,%d)mm dist=%.1fmm angle=%.1f° speed=%dcm/s res=%dmm", 
-                     i + 1, target->x, target->y, target->distance, 
-                     target->angle, target->speed, target->resolution);
+            ESP_LOGI(TAG, "Target #%d: pos=(%d,%d)mm dist=%dmm angle=%.1f° speed=%dcm/s res=%dmm", 
+                     i + 1, 
+                     target->x, target->y,
+                     (int)(target->distance),
+                     target->angle, 
+                     target->speed,                   // cm/s
+                     target->resolution);
         }
     }
+    
+    // // cm
+    // for (int i = 0; i < frame->count; i++) {
+    //     const ld2450_target_t *target = &frame->targets[i];
+    //     if (target->valid) {
+    //         ESP_LOGI(TAG, "Target #%d: pos=(%d,%d)cm dist=%dcm angle=%.1f° speed=%dcm/s res=%dmm", 
+    //                  i + 1, 
+    //                  target->x / 10, target->y / 10,  // Convert mm to cm
+    //                  (int)(target->distance / 10),    // Convert mm to cm without decimals
+    //                  target->angle, 
+    //                  target->speed,                   // Already in cm/s
+    //                  target->resolution);             // Keep in mm
+    //     }
+    // }
     
     ESP_LOGI(TAG, "-------------------------------");
 }
@@ -456,7 +475,7 @@ esp_err_t ld2450_set_data_log_interval(uint32_t interval_ms)
         instance->data_log_interval_ms = interval_ms;
         xSemaphoreGive(instance->mutex);
         
-        ESP_LOGI(TAG, "Data log interval set to %u ms", interval_ms);
+        ESP_LOGI(TAG, "Data log interval set to %" PRIu32 " ms", interval_ms);
         return ESP_OK;
     }
     

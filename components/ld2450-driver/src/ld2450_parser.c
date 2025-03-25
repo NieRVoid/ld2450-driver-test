@@ -38,8 +38,6 @@ static bool parse_target(const uint8_t *target_data, ld2450_target_t *target)
     }
     
     // Parse target data according to protocol
-    const int16_t num = 1 << 15; // 32768
-    
     // X coordinate (little-endian)
     uint16_t x_raw = target_data[0] | (target_data[1] << 8);
     // Y coordinate (little-endian)
@@ -50,25 +48,29 @@ static bool parse_target(const uint8_t *target_data, ld2450_target_t *target)
     uint16_t dist_res_raw = target_data[6] | (target_data[7] << 8);
     
     // Convert coordinates according to protocol
-    // For X: if MSB is 1, value = raw - 32768; if MSB is 0, value = -raw
-    target->x = (target_data[1] & 0x80) ? (x_raw - num) : -x_raw;
-    // For Y: value = raw - 32768 (always subtract)
-    target->y = y_raw - num;
-    // For speed: if MSB is 1, value = raw - 32768; if MSB is 0, value = -raw
-    target->speed = (target_data[5] & 0x80) ? (speed_raw - num) : -speed_raw;
+    // For X, Y, Speed: MSB 1 indicates positive, 0 indicates negative
+    // Handle the 15-bit magnitude with proper sign
+    int16_t x_magnitude = x_raw & 0x7FFF;  // Mask off MSB to get magnitude (15 bits)
+    int16_t y_magnitude = y_raw & 0x7FFF;  // Mask off MSB to get magnitude (15 bits)
+    int16_t speed_magnitude = speed_raw & 0x7FFF; // Mask off MSB to get magnitude (15 bits)
+    
+    // Apply sign based on MSB
+    target->x = (target_data[1] & 0x80) ? x_magnitude : -x_magnitude;
+    target->y = (target_data[3] & 0x80) ? y_magnitude : -y_magnitude;
+    target->speed = (target_data[5] & 0x80) ? speed_magnitude : -speed_magnitude;
+    
     // Distance resolution is used directly
     target->resolution = dist_res_raw;
     
-    // Calculate derived values only if compile-time flag is set
-#ifdef LD2450_COMPUTE_DERIVED_VALUES
+    // Always calculate derived values
     target->distance = sqrt(target->x * target->x + target->y * target->y);
     target->angle = -atan2((float)target->x, (float)target->y) * (180.0f / M_PI);
-#else
-    // Initialize to zero when not computing
-    target->distance = 0.0f;
-    target->angle = 0.0f;
-#endif
+    
     target->valid = true;
+    
+    // Add debug logging for the example in the documentation
+    ESP_LOGD(TAG, "Target data: X=%04X (%d mm), Y=%04X (%d mm), Speed=%04X (%d cm/s), Resolution=%u mm", 
+             x_raw, target->x, y_raw, target->y, speed_raw, target->speed, target->resolution);
     
     return true;
 }
