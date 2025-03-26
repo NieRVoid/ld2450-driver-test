@@ -8,19 +8,23 @@
 #include "driver/gpio.h"
 #include "esp_timer.h"
 #include "ld2450.h"
+#include "resource_monitor.h"
 
 static const char *TAG = "LD2450_TEST";
 
 // Button configuration
 #define BOOT_BUTTON_GPIO          0
 #define BUTTON_DEBOUNCE_TIME_MS   50
-#define DOUBLE_PRESS_INTERVAL_MS  500
+
+// Display intervals
+#define RADAR_DISPLAY_INTERVAL_US    5000000  // 5 seconds in microseconds
+#define RESOURCE_DISPLAY_INTERVAL_US 30000000 // 30 seconds in microseconds
 
 // Global variables for button state and program control
 static volatile bool g_exit_app = false;
 static int64_t g_last_button_press = 0;
-static int64_t g_last_display_time = 0;
-static const int64_t DISPLAY_INTERVAL_US = 3000000; // 3 seconds in microseconds
+static int64_t g_last_radar_display_time = 0;
+static int64_t g_last_resource_display_time = 0;
 
 // GPIO interrupt handler
 static void IRAM_ATTR button_isr_handler(void* arg) {
@@ -32,11 +36,8 @@ static void IRAM_ATTR button_isr_handler(void* arg) {
         return;
     }
     
-    // Check for double press
-    if (diff < DOUBLE_PRESS_INTERVAL_MS * 1000) {
-        g_exit_app = true;
-    }
-    
+    // Set exit flag on button press
+    g_exit_app = true;
     g_last_button_press = current_time;
 }
 
@@ -96,10 +97,9 @@ static void radar_data_callback(const ld2450_frame_t *frame, void *user_ctx) {
     
     int64_t current_time = esp_timer_get_time();
     
-    // Only print radar data every 3 seconds
-    if (current_time - g_last_display_time >= DISPLAY_INTERVAL_US) {
+    // Only print radar data every 5 seconds
+    if (current_time - g_last_radar_display_time >= RADAR_DISPLAY_INTERVAL_US) {
         ESP_LOGI(TAG, "---------- Radar Data Frame ----------");
-        ESP_LOGI(TAG, "Timestamp: %lld ms", frame->timestamp / 1000);
         ESP_LOGI(TAG, "Number of targets detected: %d", frame->count);
         
         for (int i = 0; i < frame->count; i++) {
@@ -116,7 +116,16 @@ static void radar_data_callback(const ld2450_frame_t *frame, void *user_ctx) {
         ESP_LOGI(TAG, "--------------------------------------\n");
         
         // Update last display time
-        g_last_display_time = current_time;
+        g_last_radar_display_time = current_time;
+    }
+    
+    // Check if it's time to display resource information (every 30 seconds)
+    if (current_time - g_last_resource_display_time >= RESOURCE_DISPLAY_INTERVAL_US) {
+        // Print all system resources
+        resource_monitor_print_all();
+        
+        // Update last resource display time
+        g_last_resource_display_time = current_time;
     }
 }
 
@@ -145,6 +154,14 @@ void print_region_filter(ld2450_filter_type_t type, ld2450_region_t regions[3]) 
 void app_main(void) {
     ESP_LOGI(TAG, "Starting LD2450 Radar Test");
     
+    // Initialize resource monitor
+    esp_err_t ret = resource_monitor_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize resource monitor! Error: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Resource monitor initialized successfully");
+    }
+    
     // Configure GPIO for boot button
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << BOOT_BUTTON_GPIO),
@@ -170,7 +187,7 @@ void app_main(void) {
     ESP_LOGI(TAG, "  Baud Rate: %lu", config.uart_baud_rate);
     ESP_LOGI(TAG, "  Auto Processing: %s", config.auto_processing ? "Enabled" : "Disabled");
     
-    esp_err_t ret = ld2450_init(&config);
+    ret = ld2450_init(&config);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize LD2450! Error: %s", esp_err_to_name(ret));
         print_error_debug_info();
@@ -277,12 +294,16 @@ void app_main(void) {
     
     ESP_LOGI(TAG, "===================================\n");
     
-    // Initialize last display time
-    g_last_display_time = esp_timer_get_time();
+    // Initialize display times
+    g_last_radar_display_time = esp_timer_get_time();
+    g_last_resource_display_time = esp_timer_get_time();
+    
+    // Initial system resource print
+    resource_monitor_print_all();
     
     // Wait for and process radar data
     ESP_LOGI(TAG, "Waiting for radar detection data...");
-    ESP_LOGI(TAG, "(Press boot button twice quickly to exit)");
+    ESP_LOGI(TAG, "(Press boot button to exit)");
     
     // Main loop - the callback will handle incoming data
     while (!g_exit_app) {
@@ -293,5 +314,6 @@ void app_main(void) {
     ESP_LOGI(TAG, "Exiting program...");
     gpio_isr_handler_remove(BOOT_BUTTON_GPIO);
     ld2450_deinit();
+    resource_monitor_deinit();
     ESP_LOGI(TAG, "Cleanup complete, goodbye!");
 }

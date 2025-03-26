@@ -9,6 +9,4 @@ idf_component_register(
         esp_common
         freertos
         heap
-        driver
-        esp_timer
 )
