@@ -93,7 +93,6 @@ typedef struct {
 typedef struct {
     ld2450_target_t targets[3];  /*!< Data for up to 3 targets */
     uint8_t count;               /*!< Number of valid targets (0-3) */
-    int64_t timestamp;           /*!< ESP timestamp when data was received */
 } ld2450_frame_t;
 
 /**

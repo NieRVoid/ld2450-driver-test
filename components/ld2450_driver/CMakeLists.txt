@@ -16,7 +16,6 @@ idf_component_register(
         freertos
         esp_event
         esp_common
-        esp_timer
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Werror)

@@ -12,7 +12,6 @@
 
 #include <string.h>
 #include <math.h>
-#include "esp_timer.h"
 #include "ld2450.h"
 #include "ld2450_private.h"
 #include "esp_log.h"
@@ -95,9 +94,6 @@ esp_err_t ld2450_parse_frame(const uint8_t *data, size_t len, ld2450_frame_t *fr
     
     // Reset target count
     frame->count = 0;
-    
-    // Get current timestamp
-    frame->timestamp = esp_timer_get_time();
     
     // Parse up to 3 targets
     for (int i = 0; i < 3; i++) {
