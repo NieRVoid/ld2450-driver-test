@@ -1,6 +1,9 @@
 /**
  * @file resource_monitor.h
  * @brief Simple resource monitoring component for ESP32
+ * 
+ * This component provides functions to monitor memory, task, and 
+ * filesystem resources on ESP32 devices.
  */
 
 #pragma once
@@ -33,6 +36,7 @@ typedef struct {
  * @brief Initialize the resource monitor
  *
  * This must be called before using other resource monitor functions.
+ * The function is idempotent and can be called multiple times safely.
  * 
  * @return esp_err_t ESP_OK on success
  */
@@ -41,6 +45,9 @@ esp_err_t resource_monitor_init(void);
 /**
  * @brief Deinitialize the resource monitor
  * 
+ * Stops any running periodic monitoring and releases resources.
+ * The function is idempotent and can be called multiple times safely.
+ * 
  * @return esp_err_t ESP_OK on success
  */
 esp_err_t resource_monitor_deinit(void);
@@ -48,46 +55,74 @@ esp_err_t resource_monitor_deinit(void);
 /**
  * @brief Get memory usage statistics
  * 
- * @param stats Pointer to store memory statistics
- * @return esp_err_t ESP_OK on success
+ * @param[out] stats Pointer to store memory statistics
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_ARG if stats is NULL,
+ *                   ESP_ERR_INVALID_STATE if not initialized
  */
 esp_err_t resource_monitor_get_mem_stats(resource_monitor_mem_stats_t *stats);
 
 /**
- * @brief Get CPU usage by task
- * 
- * Prints CPU usage information for all tasks to the log.
- * 
- * @return esp_err_t ESP_OK on success
- */
-esp_err_t resource_monitor_print_cpu_stats(void);
-
-/**
  * @brief Print memory usage statistics
  * 
- * @return esp_err_t ESP_OK on success
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_STATE if not initialized
  */
 esp_err_t resource_monitor_print_mem_stats(void);
 
 /**
- * @brief Print all resource usage (memory and CPU) 
+ * @brief Print CPU usage by task
  * 
- * @return esp_err_t ESP_OK on success
+ * Prints CPU usage information for all tasks to the log.
+ * Requires configGENERATE_RUN_TIME_STATS to be enabled.
+ * 
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_STATE if not initialized,
+ *                   ESP_ERR_NO_MEM if memory allocation fails
  */
-esp_err_t resource_monitor_print_all(void);
+esp_err_t resource_monitor_print_cpu_stats(void);
+
+/**
+ * @brief Print task stack usage information
+ * 
+ * Prints stack usage for all tasks to the log.
+ * 
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_STATE if not initialized,
+ *                   ESP_ERR_NO_MEM if memory allocation fails
+ */
+esp_err_t resource_monitor_print_stack_stats(void);
+
+/**
+ * @brief Print flash filesystem usage statistics
+ * 
+ * Attempts to get statistics for both SPIFFS and FAT filesystems.
+ * 
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_STATE if not initialized
+ */
+esp_err_t resource_monitor_print_flash_stats(void);
+
+/**
+ * @brief Print comprehensive resource statistics
+ * 
+ * Prints all available resource statistics including memory, CPU usage,
+ * task stack usage, and flash usage.
+ * 
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_STATE if not initialized
+ */
+esp_err_t resource_monitor_print_comprehensive(void);
 
 /**
  * @brief Start periodic resource usage printing
  * 
- * @param interval_ms Interval between prints in milliseconds
- * @return esp_err_t ESP_OK on success
+ * @param interval_ms Interval between prints in milliseconds (minimum 100ms)
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_STATE if not initialized,
+ *                   ESP_ERR_INVALID_ARG if interval is too small,
+ *                   ESP_ERR_NO_MEM if timer creation fails
  */
 esp_err_t resource_monitor_start_periodic(uint32_t interval_ms);
 
 /**
  * @brief Stop periodic resource usage printing
  * 
- * @return esp_err_t ESP_OK on success
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_STATE if not initialized,
+ *                   ESP_FAIL if timer fails to stop
  */
 esp_err_t resource_monitor_stop_periodic(void);
 

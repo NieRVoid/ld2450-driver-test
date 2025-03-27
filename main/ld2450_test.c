@@ -121,8 +121,11 @@ static void radar_data_callback(const ld2450_frame_t *frame, void *user_ctx) {
     
     // Check if it's time to display resource information (every 30 seconds)
     if (current_time - g_last_resource_display_time >= RESOURCE_DISPLAY_INTERVAL_US) {
-        // Print all system resources
-        resource_monitor_print_all();
+        // Print all system resources using the updated comprehensive function
+        esp_err_t ret = resource_monitor_print_comprehensive();
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to print resource stats: %s", esp_err_to_name(ret));
+        }
         
         // Update last resource display time
         g_last_resource_display_time = current_time;
@@ -299,7 +302,10 @@ void app_main(void) {
     g_last_resource_display_time = esp_timer_get_time();
     
     // Initial system resource print
-    resource_monitor_print_all();
+    ret = resource_monitor_print_comprehensive();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to print initial resource stats: %s", esp_err_to_name(ret));
+    }
     
     // Wait for and process radar data
     ESP_LOGI(TAG, "Waiting for radar detection data...");
@@ -313,7 +319,16 @@ void app_main(void) {
     // Clean up before exiting
     ESP_LOGI(TAG, "Exiting program...");
     gpio_isr_handler_remove(BOOT_BUTTON_GPIO);
-    ld2450_deinit();
-    resource_monitor_deinit();
+    
+    ret = ld2450_deinit();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Error during LD2450 deinitialization: %s", esp_err_to_name(ret));
+    }
+    
+    ret = resource_monitor_deinit();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Error during resource monitor deinitialization: %s", esp_err_to_name(ret));
+    }
+    
     ESP_LOGI(TAG, "Cleanup complete, goodbye!");
 }
