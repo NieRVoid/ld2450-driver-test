@@ -9,4 +9,8 @@ idf_component_register(
         esp_common
         freertos
         heap
+        esp_hw_support
+        spiffs
+        vfs
+        fatfs
 )
