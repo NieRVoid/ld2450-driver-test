@@ -26,6 +26,9 @@ static int64_t g_last_button_press = 0;
 static int64_t g_last_radar_display_time = 0;
 static int64_t g_last_resource_display_time = 0;
 
+// Consumer handle for radar data
+static ld2450_consumer_handle_t g_radar_consumer = 0;
+
 // GPIO interrupt handler
 static void IRAM_ATTR button_isr_handler(void* arg) {
     int64_t current_time = esp_timer_get_time();
@@ -91,45 +94,44 @@ void print_error_debug_info(void) {
     }
 }
 
-// Callback function to handle radar detection data
-static void radar_data_callback(const ld2450_frame_t *frame, void *user_ctx) {
+/**
+ * @brief Print radar data from a frame
+ * 
+ * @param frame Pointer to the radar frame
+ */
+static void print_radar_data(const ld2450_frame_t *frame) {
     if (!frame) return;
     
-    int64_t current_time = esp_timer_get_time();
+    ESP_LOGI(TAG, "---------- Radar Data Frame ----------");
     
-    // Only print radar data every 5 seconds
-    if (current_time - g_last_radar_display_time >= RADAR_DISPLAY_INTERVAL_US) {
-        ESP_LOGI(TAG, "---------- Radar Data Frame ----------");
-        ESP_LOGI(TAG, "Number of targets detected: %d", frame->count);
-        
-        for (int i = 0; i < frame->count; i++) {
+    // Calculate number of valid targets from mask
+    int valid_count = 0;
+    for (int i = 0; i < 3; i++) {
+        if (frame->valid_mask & (1 << i)) {
+            valid_count++;
+        }
+    }
+    
+    ESP_LOGI(TAG, "Number of targets detected: %d", valid_count);
+    
+    for (int i = 0; i < 3; i++) {
+        // Check if this target is valid using the mask
+        if (frame->valid_mask & (1 << i)) {
             const ld2450_target_t *target = &frame->targets[i];
-            if (target->valid) {
-                ESP_LOGI(TAG, "Target #%d:", i + 1);
-                ESP_LOGI(TAG, "  Position:   (%d, %d) mm", target->x, target->y);
-                ESP_LOGI(TAG, "  Distance:   %.2f mm", target->distance);
-                ESP_LOGI(TAG, "  Angle:      %.1f°", target->angle);
-                ESP_LOGI(TAG, "  Speed:      %d cm/s", target->speed);
-                ESP_LOGI(TAG, "  Resolution: %d mm", target->resolution);
-            }
+            
+            // Calculate distance and angle from x,y coordinates
+            // float distance = sqrtf((float)target->x * target->x + (float)target->y * target->y);
+            // float angle = atan2f((float)target->y, (float)target->x) * 180.0f / 3.14159f;
+            
+            ESP_LOGI(TAG, "Target #%d:", i + 1);
+            ESP_LOGI(TAG, "  Position:   (%d, %d) mm", target->x, target->y);
+            // ESP_LOGI(TAG, "  Distance:   %.2f mm", distance);
+            // ESP_LOGI(TAG, "  Angle:      %.1f°", angle);
+            ESP_LOGI(TAG, "  Speed:      %d cm/s", target->speed);
         }
-        ESP_LOGI(TAG, "--------------------------------------\n");
-        
-        // Update last display time
-        g_last_radar_display_time = current_time;
     }
     
-    // Check if it's time to display resource information (every 30 seconds)
-    if (current_time - g_last_resource_display_time >= RESOURCE_DISPLAY_INTERVAL_US) {
-        // Print all system resources using the updated comprehensive function
-        esp_err_t ret = resource_monitor_print_comprehensive();
-        if (ret != ESP_OK) {
-            ESP_LOGW(TAG, "Failed to print resource stats: %s", esp_err_to_name(ret));
-        }
-        
-        // Update last resource display time
-        g_last_resource_display_time = current_time;
-    }
+    ESP_LOGI(TAG, "--------------------------------------\n");
 }
 
 void print_mac_address(uint8_t mac[6]) {
@@ -151,6 +153,44 @@ void print_region_filter(ld2450_filter_type_t type, ld2450_region_t regions[3]) 
             ESP_LOGI(TAG, "  Region %d: (%d,%d) to (%d,%d) mm", 
                     i+1, regions[i].x1, regions[i].y1, regions[i].x2, regions[i].y2);
         }
+    }
+}
+
+/**
+ * @brief Process radar data at regular intervals
+ * 
+ * This function checks for new radar data and processes it at the defined intervals.
+ */
+static void process_radar_data_timed(void) {
+    int64_t current_time = esp_timer_get_time();
+    
+    // Check for radar display timing
+    if (current_time - g_last_radar_display_time >= RADAR_DISPLAY_INTERVAL_US) {
+        // Get latest frame without waiting
+        ld2450_frame_t frame;
+        esp_err_t ret = ld2450_get_latest_frame(g_radar_consumer, &frame);
+        
+        if (ret == ESP_OK) {
+            // Print the frame data
+            print_radar_data(&frame);
+            
+            // Update last display time
+            g_last_radar_display_time = current_time;
+        } else if (ret != ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "Error getting radar frame: %s", esp_err_to_name(ret));
+        }
+    }
+    
+    // Check for resource monitoring timing
+    if (current_time - g_last_resource_display_time >= RESOURCE_DISPLAY_INTERVAL_US) {
+        // Print all system resources using the updated comprehensive function
+        esp_err_t ret = resource_monitor_print_comprehensive();
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to print resource stats: %s", esp_err_to_name(ret));
+        }
+        
+        // Update last resource display time
+        g_last_resource_display_time = current_time;
     }
 }
 
@@ -198,13 +238,15 @@ void app_main(void) {
     }
     ESP_LOGI(TAG, "LD2450 initialized successfully");
     
-    // Register callback for target data
-    ret = ld2450_register_target_callback(radar_data_callback, NULL);
+    // Register as a consumer of radar data
+    ret = ld2450_register_consumer(&g_radar_consumer);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to register callback! Error: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to register as radar consumer! Error: %s", esp_err_to_name(ret));
         print_error_debug_info();
+        ld2450_deinit();
         return;
     }
+    ESP_LOGI(TAG, "Registered as radar consumer with handle: %lu", (unsigned long)g_radar_consumer);
     
     // Configure the radar
     ESP_LOGI(TAG, "Configuring radar settings...");
@@ -311,14 +353,24 @@ void app_main(void) {
     ESP_LOGI(TAG, "Waiting for radar detection data...");
     ESP_LOGI(TAG, "(Press boot button to exit)");
     
-    // Main loop - the callback will handle incoming data
+    // Main loop - periodically check for new radar data
     while (!g_exit_app) {
-        vTaskDelay(pdMS_TO_TICKS(100)); // Check exit flag every 100ms
+        // Process radar data at regular intervals
+        process_radar_data_timed();
+        
+        // Brief delay to avoid excessive CPU usage
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
     
     // Clean up before exiting
     ESP_LOGI(TAG, "Exiting program...");
     gpio_isr_handler_remove(BOOT_BUTTON_GPIO);
+    
+    // Unregister as radar consumer
+    ret = ld2450_unregister_consumer(g_radar_consumer);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Error unregistering radar consumer: %s", esp_err_to_name(ret));
+    }
     
     ret = ld2450_deinit();
     if (ret != ESP_OK) {
